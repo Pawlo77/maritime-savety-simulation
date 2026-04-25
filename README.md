@@ -5,11 +5,15 @@ Reproducible multi-agent maritime weather mesh simulation package.
 ## Quick Start
 
 ```bash
-uv sync
-uv run pytest -q
+make clean
+make install
+make test
+make gui
+
+# Run the full experiment suite
 uv run python -c "from maritime_mesh.experiment.runner import ExperimentRunner; ExperimentRunner(n_seeds=1).run_all()"
-uv run streamlit run src/maritime_mesh/dashboard/app.py
 ```
+
 
 ## Project Structure
 

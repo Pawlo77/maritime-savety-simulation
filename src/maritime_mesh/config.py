@@ -3,7 +3,11 @@
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from maritime_mesh.constants import SHORE_STATION_POSITION, WORLD_SIZE_NM
 from maritime_mesh.enums import MethodCondition
+
+WaypointTuple = tuple[float, float]
+LaneDefinition = tuple[str, tuple[WaypointTuple, ...]]
 
 
 @dataclass(frozen=True)
@@ -35,3 +39,6 @@ class SimulationConfig:
     evacuation_enabled: bool
     human_factors_enabled: bool
     output_dir: Path
+    world_size_nm: float = WORLD_SIZE_NM
+    shore_station_position: tuple[float, float] = SHORE_STATION_POSITION
+    lane_definitions: tuple[LaneDefinition, ...] = field(default_factory=tuple)

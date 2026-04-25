@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from maritime_mesh.constants import MACRO_TICK_HOURS, WORLD_SIZE_NM
+from maritime_mesh.constants import MACRO_TICK_HOURS
 from maritime_mesh.enums import VesselState
 
 
@@ -25,8 +25,8 @@ class KpiLogger:
         """Append coarse grid weather probes for map heat overlay."""
         for row in range(self._weather_probe_steps):
             for col in range(self._weather_probe_steps):
-                x_nm = WORLD_SIZE_NM * (col / max(1, self._weather_probe_steps - 1))
-                y_nm = WORLD_SIZE_NM * (row / max(1, self._weather_probe_steps - 1))
+                x_nm = weather_field.world_size_nm * (col / max(1, self._weather_probe_steps - 1))
+                y_nm = weather_field.world_size_nm * (row / max(1, self._weather_probe_steps - 1))
                 self.records.append(
                     {
                         "tick": tick,
@@ -35,6 +35,7 @@ class KpiLogger:
                         "x_nm": x_nm,
                         "y_nm": y_nm,
                         "hazard": weather_field.hazard_at(x_nm, y_nm),
+                        "world_size_nm": weather_field.world_size_nm,
                     }
                 )
 
@@ -47,6 +48,7 @@ class KpiLogger:
         relay_links: list[tuple[int, int]],
         collisions: list[tuple[int, int]],
         weather_field,
+        world_size_nm: float,
     ) -> None:
         """Append entities and events for one tick."""
         self._append_weather_probes(tick=tick, weather_field=weather_field)
@@ -73,6 +75,7 @@ class KpiLogger:
                     "distance_to_shore_nm": vessel.last_distance_to_shore,
                     "mesh_observations": vessel.last_mesh_observation_count,
                     "error_probability": vessel.last_error_probability,
+                    "world_size_nm": world_size_nm,
                 }
             )
         self.records.append(
@@ -85,6 +88,7 @@ class KpiLogger:
                 "hazard": weather_field.hazard_at(*coastal_station.position),
                 "shore_broadcast": coastal_station.last_broadcast,
                 "queued_sos": len(coastal_station.sos_queue),
+                "world_size_nm": world_size_nm,
             }
         )
         for rescue in rescue_agents:
@@ -99,6 +103,7 @@ class KpiLogger:
                     "mobilisation_ticks_remaining": rescue.mobilisation_ticks_remaining,
                     "target_x_nm": rescue.target_position[0],
                     "target_y_nm": rescue.target_position[1],
+                    "world_size_nm": world_size_nm,
                 }
             )
         for source_id, target_id in relay_links:
@@ -109,6 +114,7 @@ class KpiLogger:
                     "entity_id": f"{source_id}_{target_id}",
                     "source_id": source_id,
                     "target_id": target_id,
+                    "world_size_nm": world_size_nm,
                 }
             )
         for vessel_a, vessel_b in collisions:
@@ -120,6 +126,7 @@ class KpiLogger:
                     "event_kind": "collision",
                     "source_id": vessel_a,
                     "target_id": vessel_b,
+                    "world_size_nm": world_size_nm,
                 }
             )
 

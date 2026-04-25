@@ -15,7 +15,7 @@ from maritime_mesh.communication.mesh_relay import MeshRelayProtocol
 from maritime_mesh.communication.packet import MeshPacket, SosPacket
 from maritime_mesh.communication.shore_radio import ShoreRadioModel
 from maritime_mesh.config import SimulationConfig
-from maritime_mesh.constants import MACRO_TICK_HOURS, WORLD_SIZE_NM
+from maritime_mesh.constants import MACRO_TICK_HOURS
 from maritime_mesh.enums import CrewArchetype, MethodCondition, RescueAssetType, VesselState
 from maritime_mesh.fusion.confidence import ConfidenceWeighter
 from maritime_mesh.fusion.shore_trust import ForecastFuser, ShoreTrustDecay
@@ -34,7 +34,9 @@ class MaritimeModel(Model):
         super().__init__()
         self.config = config
         self.rng = np.random.default_rng(config.seed)
-        self.weather_field = WeatherField(rng=self.rng)
+        self.weather_field = WeatherField(rng=self.rng, world_size_nm=config.world_size_nm)
+        self.world_size_nm = config.world_size_nm
+        self.shore_station_position = config.shore_station_position
         self.scheduler = RandomActivation(self)
         self.vessels: list[VesselAgent] = []
         self.rescue_agents: list[RescueAgent] = []
@@ -54,10 +56,33 @@ class MaritimeModel(Model):
 
     def _build_lanes(self) -> list[ShippingLane]:
         """Construct canonical lanes used by vessel spawns."""
+        if self.config.lane_definitions:
+            return [
+                ShippingLane(
+                    lane_name,
+                    [Waypoint(x_nm=waypoint[0], y_nm=waypoint[1]) for waypoint in waypoints],
+                )
+                for lane_name, waypoints in self.config.lane_definitions
+            ]
         return [
-            ShippingLane("north_south", [Waypoint(20.0, 0.0), Waypoint(20.0, WORLD_SIZE_NM)]),
-            ShippingLane("east_west", [Waypoint(0.0, 60.0), Waypoint(WORLD_SIZE_NM, 60.0)]),
-            ShippingLane("diagonal", [Waypoint(10.0, 10.0), Waypoint(90.0, 90.0)]),
+            ShippingLane(
+                "north_south",
+                [Waypoint(20.0, 0.0), Waypoint(20.0, self.world_size_nm)],
+            ),
+            ShippingLane(
+                "east_west",
+                [
+                    Waypoint(0.0, min(60.0, self.world_size_nm * 0.6)),
+                    Waypoint(self.world_size_nm, min(60.0, self.world_size_nm * 0.6)),
+                ],
+            ),
+            ShippingLane(
+                "diagonal",
+                [
+                    Waypoint(self.world_size_nm * 0.1, self.world_size_nm * 0.1),
+                    Waypoint(self.world_size_nm * 0.9, self.world_size_nm * 0.9),
+                ],
+            ),
         ]
 
     def _spawn_agents(self) -> None:
@@ -72,6 +97,7 @@ class MaritimeModel(Model):
             rng=self.rng,
             shore_radio=shore_radio,
             weather_field=self.weather_field,
+            position=self.shore_station_position,
         )
         self.scheduler.add(self.coastal_station)
 
@@ -112,11 +138,12 @@ class MaritimeModel(Model):
                 raft_model=RaftDeploymentModel(rng=self.rng),
                 survival_model=SurvivalModel(rng=self.rng),
                 position=(
-                    float(self.rng.uniform(0.0, WORLD_SIZE_NM)),
-                    float(self.rng.uniform(0.0, WORLD_SIZE_NM)),
+                    float(self.rng.uniform(0.0, self.world_size_nm)),
+                    float(self.rng.uniform(0.0, self.world_size_nm)),
                 ),
                 speed_kn=float(self.rng.uniform(10.0, 20.0)),
                 archetype=archetype,
+                shore_station_position=self.shore_station_position,
             )
             self.vessels.append(vessel)
             self.scheduler.add(vessel)
@@ -158,6 +185,7 @@ class MaritimeModel(Model):
             rng=self.rng,
             asset_type=asset,
             target_position=packet.position,
+            start_position=self.shore_station_position,
         )
         self.rescue_agents.append(rescue_agent)
         self.scheduler.add(rescue_agent)
@@ -189,6 +217,7 @@ class MaritimeModel(Model):
             relay_links=relay_links,
             collisions=collisions,
             weather_field=self.weather_field,
+            world_size_nm=self.world_size_nm,
         )
         self.tick += 1
         self.utc_hours += MACRO_TICK_HOURS

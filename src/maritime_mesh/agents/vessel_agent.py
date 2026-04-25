@@ -17,7 +17,6 @@ from maritime_mesh.constants import (
     ARCHETYPE_MOD_STANDARD,
     ARCHETYPE_MOD_VETERAN,
     MACRO_TICK_HOURS,
-    SHORE_STATION_POSITION,
 )
 from maritime_mesh.enums import CrewArchetype, VesselState
 from maritime_mesh.fusion.confidence import ConfidenceWeighter
@@ -49,6 +48,7 @@ class VesselAgent(AbstractMesaAgent):
         position: tuple[float, float],
         speed_kn: float,
         archetype: CrewArchetype,
+        shore_station_position: tuple[float, float],
     ) -> None:
         """Initialize vessel with composed behaviour components."""
         super().__init__(model=model, rng=rng)
@@ -65,6 +65,7 @@ class VesselAgent(AbstractMesaAgent):
         self.raft_model = raft_model
         self.survival_model = survival_model
         self.position = position
+        self.shore_station_position = shore_station_position
         self.heading_deg = 0.0
         self.speed_kn = speed_kn
         self.archetype = archetype
@@ -123,7 +124,7 @@ class VesselAgent(AbstractMesaAgent):
 
         w_true = self.weather_field.hazard_at(*self.position)
         self.last_true_hazard = w_true
-        distance_to_shore = dist(self.position, SHORE_STATION_POSITION)
+        distance_to_shore = dist(self.position, self.shore_station_position)
         self.last_distance_to_shore = distance_to_shore
         if self.shore_radio.attempt_receive(distance_nm=distance_to_shore, local_hazard=w_true):
             self.w_hat_shore = self.shore_radio.broadcast(true_hazard=w_true)

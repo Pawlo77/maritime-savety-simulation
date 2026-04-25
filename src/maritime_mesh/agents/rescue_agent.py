@@ -10,7 +10,6 @@ from maritime_mesh.constants import (
     MACRO_TICK_HOURS,
     PATROL_VESSEL_SPEED_KN,
     RESCUE_MOBILISATION_TICKS,
-    SHORE_STATION_POSITION,
 )
 from maritime_mesh.enums import RescueAssetType, VesselState
 from maritime_mesh.mesa_compat import Model
@@ -26,6 +25,7 @@ class RescueAgent(AbstractMesaAgent):
         rng: np.random.Generator,
         asset_type: RescueAssetType,
         target_position: tuple[float, float],
+        start_position: tuple[float, float],
     ) -> None:
         """Initialize rescue asset configuration."""
         super().__init__(model=model, rng=rng)
@@ -36,7 +36,7 @@ class RescueAgent(AbstractMesaAgent):
             if asset_type == RescueAssetType.HELICOPTER
             else PATROL_VESSEL_SPEED_KN
         )
-        self.position = SHORE_STATION_POSITION
+        self.position = start_position
         self.target_position = target_position
         self.mobilisation_ticks_remaining = RESCUE_MOBILISATION_TICKS
         self.is_idle = False
@@ -50,12 +50,18 @@ class RescueAgent(AbstractMesaAgent):
         distance_to_target = dist(self.position, self.target_position)
         if distance_to_target == 0.0:
             for vessel in self.model.vessels:
-                if vessel.state == VesselState.EVAC and dist(vessel.position, self.target_position) <= 0.2:
+                if (
+                    vessel.state == VesselState.EVAC
+                    and dist(vessel.position, self.target_position) <= 0.2
+                ):
                     vessel.state = VesselState.RESCUED
             return
 
         step_nm = min(distance_to_target, self.speed_kn * MACRO_TICK_HOURS)
-        angle = atan2(self.target_position[1] - self.position[1], self.target_position[0] - self.position[0])
+        angle = atan2(
+            self.target_position[1] - self.position[1],
+            self.target_position[0] - self.position[0],
+        )
         self.position = (
             self.position[0] + (step_nm * cos(angle)),
             self.position[1] + (step_nm * sin(angle)),

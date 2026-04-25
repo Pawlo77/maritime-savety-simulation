@@ -7,7 +7,6 @@ import numpy as np
 from maritime_mesh.agents.base_agent import AbstractMesaAgent
 from maritime_mesh.communication.packet import SosPacket
 from maritime_mesh.communication.shore_radio import ShoreRadioModel
-from maritime_mesh.constants import SHORE_STATION_POSITION
 from maritime_mesh.mesa_compat import Model
 from maritime_mesh.weather.weather_field import WeatherField
 
@@ -22,11 +21,12 @@ class CoastalStationAgent(AbstractMesaAgent):
         rng: np.random.Generator,
         shore_radio: ShoreRadioModel,
         weather_field: WeatherField,
+        position: tuple[float, float],
     ) -> None:
         """Initialize station dependencies and queue state."""
         super().__init__(model=model, rng=rng)
         self.unique_id = unique_id
-        self.position = SHORE_STATION_POSITION
+        self.position = position
         self.sos_queue: deque[SosPacket] = deque()
         self.shore_radio = shore_radio
         self.weather_field = weather_field

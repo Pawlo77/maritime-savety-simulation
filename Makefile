@@ -25,9 +25,7 @@ help:
 	@echo "  make test                   - Run tests"
 	@echo "  make pre-commit             - Run pre-commit checks on changed files"
 	@echo "  make pre-commit-all         - Run pre-commit checks on all files"
-	@echo "  make datasets               - Download/build all dataset variants (default, small, extended)"
-	@echo "  make mlflow                 - Launch MLflow UI for local runs"
-	@echo "  make mlflow-stop            - Stop local MLflow UI processes"
+	@echo "  make gui                    - Start the streamlit app"
 
 # install dependencies and pre-commit hooks
 install:
@@ -51,10 +49,6 @@ pre-commit:
 pre-commit-all:
 	uv run pre-commit run --all-files
 
-# Download/build all dataset variants used by the project.
-datasets:
-	echo "Note implemented."
-
 #########################
 # Orchestration Targets #
 #########################
@@ -63,44 +57,6 @@ datasets:
 # Other Targets #
 #################
 
-# Launch MLflow UI for local runs
-mlflow:
-	@PORT="$(MLFLOW_PORT)"; \
-	if command -v lsof >/dev/null 2>&1 && lsof -nP -iTCP:"$$PORT" -sTCP:LISTEN >/dev/null 2>&1; then \
-		echo "Port $$PORT is already in use. Run 'make mlflow-stop' or use another port: make mlflow MLFLOW_PORT=5001"; \
-		lsof -nP -iTCP:"$$PORT" -sTCP:LISTEN; \
-		exit 1; \
-	fi; \
-	uv run mlflow ui --backend-store-uri sqlite:///mlruns.db --default-artifact-root ./mlruns --host "$(MLFLOW_HOST)" --port "$$PORT" --workers "$(MLFLOW_WORKERS)"
-
-# Stop local MLflow UI processes
-mlflow-stop:
-	@PORT="$(MLFLOW_PORT)"; \
-	PIDS="$$( ( \
-		pgrep -f 'mlflow.server.fastapi_app' || true; \
-		pgrep -f 'python -m mlflow' || true; \
-		pgrep -f 'mlflow ui' || true; \
-		pgrep -f 'mlflow server' || true \
-	) | sort -u )"; \
-	if [ -z "$$PIDS" ] && command -v lsof >/dev/null 2>&1; then \
-		PORT_PIDS="$$(lsof -tiTCP:"$$PORT" -sTCP:LISTEN 2>/dev/null || true)"; \
-		if [ -n "$$PORT_PIDS" ]; then \
-			for PID in $$PORT_PIDS; do \
-				ARGS="$$(ps -p $$PID -o args= 2>/dev/null || true)"; \
-				case "$$ARGS" in \
-					*mlflow*|*fastapi_app:app*) PIDS="$$PIDS $$PID" ;; \
-				esac; \
-			done; \
-			PIDS="$$(printf '%s\n' $$PIDS | awk 'NF' | sort -u | tr '\n' ' ')"; \
-		fi; \
-	fi; \
-	if [ -n "$$PIDS" ]; then \
-		echo "Stopping MLflow UI processes: $$PIDS"; \
-		kill $$PIDS; \
-	else \
-		echo "No MLflow UI process found."; \
-		if command -v lsof >/dev/null 2>&1 && lsof -nP -iTCP:"$$PORT" -sTCP:LISTEN >/dev/null 2>&1; then \
-			echo "Note: port $$PORT is occupied by a non-MLflow process:"; \
-			lsof -nP -iTCP:"$$PORT" -sTCP:LISTEN; \
-		fi; \
-	fi
+# start the streamlit app
+gui:
+	uv run streamlit run src/maritime_mesh/dashboard/app.py

@@ -9,9 +9,10 @@ from maritime_mesh.weather.weather_cell import WeatherCell
 class WeatherField:
     """Weather grid that evolves with smooth stochastic drift."""
 
-    def __init__(self, rng: np.random.Generator) -> None:
+    def __init__(self, rng: np.random.Generator, world_size_nm: float = WORLD_SIZE_NM) -> None:
         """Initialize field with seeded random generator."""
         self.rng = rng
+        self.world_size_nm = world_size_nm
         self._sea = rng.uniform(0.0, 1.0, size=(WEATHER_GRID_CELLS, WEATHER_GRID_CELLS))
         self._vis = rng.uniform(0.0, 1.0, size=(WEATHER_GRID_CELLS, WEATHER_GRID_CELLS))
         self._wind = rng.uniform(0.0, 1.0, size=(WEATHER_GRID_CELLS, WEATHER_GRID_CELLS))
@@ -32,8 +33,12 @@ class WeatherField:
     def step(self) -> None:
         """Advance weather by adding small bounded random drift."""
         drift_scale = 0.03
-        self._sea = np.clip(self._sea + self.rng.normal(0.0, drift_scale, self._sea.shape), 0.0, 1.0)
-        self._vis = np.clip(self._vis + self.rng.normal(0.0, drift_scale, self._vis.shape), 0.0, 1.0)
+        self._sea = np.clip(
+            self._sea + self.rng.normal(0.0, drift_scale, self._sea.shape), 0.0, 1.0
+        )
+        self._vis = np.clip(
+            self._vis + self.rng.normal(0.0, drift_scale, self._vis.shape), 0.0, 1.0
+        )
         self._wind = np.clip(
             self._wind + self.rng.normal(0.0, drift_scale, self._wind.shape), 0.0, 1.0
         )
@@ -41,8 +46,8 @@ class WeatherField:
 
     def _coord_to_index(self, value_nm: float) -> int:
         """Convert world coordinate to weather-grid index."""
-        clipped = min(max(value_nm, 0.0), WORLD_SIZE_NM)
-        ratio = clipped / WORLD_SIZE_NM
+        clipped = min(max(value_nm, 0.0), self.world_size_nm)
+        ratio = clipped / self.world_size_nm
         return min(WEATHER_GRID_CELLS - 1, int(ratio * WEATHER_GRID_CELLS))
 
     def hazard_at(self, x_nm: float, y_nm: float) -> float:

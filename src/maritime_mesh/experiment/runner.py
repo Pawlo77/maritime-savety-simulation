@@ -1,5 +1,6 @@
 """Experiment execution driver."""
 
+from dataclasses import replace
 from pathlib import Path
 
 import pandas as pd
@@ -17,23 +18,52 @@ class ExperimentRunner:
         self,
         n_seeds: int = 30,
         output_dir: Path | None = None,
+        scenario_factories: list | None = None,
+        methods: list[MethodCondition] | None = None,
+        simulation_overrides: dict | None = None,
+        scenario_overrides: dict | None = None,
     ) -> None:
         """Initialize matrix dimensions and factories."""
-        self.scenario_factories = [
+        self.scenario_factories = scenario_factories or [
             scenarios.scenario_1_calm_passage,
             scenarios.scenario_2_storm_corridor,
             scenarios.scenario_3_blind_shore,
             scenarios.scenario_4_deep_water_rescue,
         ]
-        self.methods = [MethodCondition.BASELINE_A, MethodCondition.BASELINE_B, MethodCondition.PROPOSED]
+        self.methods = methods or [
+            MethodCondition.BASELINE_A,
+            MethodCondition.BASELINE_B,
+            MethodCondition.PROPOSED,
+        ]
         self.n_seeds = n_seeds
         self.output_dir = output_dir or Path("outputs/maritime_mesh")
+        self.simulation_overrides = simulation_overrides or {}
+        self.scenario_overrides = scenario_overrides or {}
+
+    def _apply_overrides(self, config: SimulationConfig) -> SimulationConfig:
+        """Apply GUI/runtime overrides to scenario and simulation configs."""
+        scenario_override_keys = {
+            key: value
+            for key, value in self.scenario_overrides.items()
+            if hasattr(config.scenario, key) and value is not None
+        }
+        sim_override_keys = {
+            key: value
+            for key, value in self.simulation_overrides.items()
+            if hasattr(config, key) and value is not None
+        }
+        scenario = replace(config.scenario, **scenario_override_keys)
+        return replace(config, scenario=scenario, output_dir=self.output_dir, **sim_override_keys)
 
     def run_single(self, config: SimulationConfig) -> dict[str, float]:
         """Run one simulation and return KPI dictionary."""
-        model = MaritimeModel(config)
+        effective_config = self._apply_overrides(config)
+        model = MaritimeModel(effective_config)
         kpis = model.run()
-        parquet_path = self.output_dir / f"{config.scenario.name}_{config.method.value}_{config.seed}.parquet"
+        parquet_path = self.output_dir / (
+            f"{effective_config.scenario.name}_{effective_config.method.value}_"
+            f"{effective_config.seed}.parquet"
+        )
         model.kpi_logger.flush_to_parquet(str(parquet_path))
         return kpis
 
