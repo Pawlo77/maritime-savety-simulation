@@ -44,6 +44,14 @@ class StatisticalAnalyser:
         filtered = self.results_df[self.results_df["scenario"] == scenario_name]
         sample_a = filtered[filtered["method"] == condition_a.value][kpi].to_numpy()
         sample_b = filtered[filtered["method"] == condition_b.value][kpi].to_numpy()
+        if len(sample_a) == 0 or len(sample_b) == 0:
+            return {
+                "p_value": float("nan"),
+                "cliffs_delta": float("nan"),
+                "ci_lower": float("nan"),
+                "ci_upper": float("nan"),
+                "confirmed": 0.0,
+            }
         _, p_value = mannwhitneyu(sample_a, sample_b, alternative="two-sided")
         delta = _cliffs_delta(sample_a, sample_b)
         ci_lower, ci_upper = self._bootstrap_ci(sample_a - sample_b)
@@ -56,42 +64,87 @@ class StatisticalAnalyser:
             "confirmed": float(confirmed),
         }
 
-    def full_report(self) -> pd.DataFrame:
-        """Produce compact hypothesis report across scenario-specific KPIs."""
-        comparisons = [
-            (
-                "scenario_2_storm_corridor",
-                "fatal_per_1k_hrs",
-                MethodCondition.PROPOSED,
-                MethodCondition.BASELINE_A,
-                "H1",
-            ),
-            (
-                "scenario_4_deep_water_rescue",
-                "survival_ratio",
-                MethodCondition.PROPOSED,
-                MethodCondition.BASELINE_A,
-                "H2",
-            ),
-            (
-                "scenario_3_blind_shore",
-                "fatal_per_1k_hrs",
-                MethodCondition.PROPOSED,
-                MethodCondition.BASELINE_B,
-                "H3",
-            ),
-        ]
+    @staticmethod
+    def _holm_adjust(p_values: list[float]) -> list[float]:
+        """Holm-Bonferroni correction for multiple comparisons."""
+        indexed = sorted(enumerate(p_values), key=lambda item: item[1])
+        adjusted = [float("nan")] * len(p_values)
+        running_max = 0.0
+        m = len(p_values)
+        for rank, (index, value) in enumerate(indexed):
+            corrected = min(1.0, (m - rank) * value)
+            running_max = max(running_max, corrected)
+            adjusted[index] = running_max
+        return adjusted
+
+    def evaluate_comparisons(
+        self,
+        comparisons: list[dict],
+        apply_holm_correction: bool = True,
+    ) -> pd.DataFrame:
+        """Evaluate arbitrary comparison list and return report dataframe."""
         rows = []
-        for scenario_name, kpi, cond_a, cond_b, hypothesis in comparisons:
-            outcome = self.test_hypothesis(kpi, cond_a, cond_b, scenario_name)
+        for comparison in comparisons:
+            cond_a = MethodCondition(comparison["condition_a"])
+            cond_b = MethodCondition(comparison["condition_b"])
+            outcome = self.test_hypothesis(
+                kpi=comparison["kpi"],
+                condition_a=cond_a,
+                condition_b=cond_b,
+                scenario_name=comparison["scenario"],
+            )
             rows.append(
                 {
-                    "hypothesis": hypothesis,
-                    "scenario": scenario_name,
-                    "kpi": kpi,
+                    "hypothesis": comparison.get("hypothesis", ""),
+                    "scenario": comparison["scenario"],
+                    "kpi": comparison["kpi"],
                     "condition_a": cond_a.value,
                     "condition_b": cond_b.value,
                     **outcome,
                 }
             )
-        return pd.DataFrame(rows)
+        report = pd.DataFrame(rows)
+        if report.empty:
+            return report
+        if apply_holm_correction:
+            p_values = report["p_value"].fillna(1.0).astype(float).tolist()
+            report["p_value_corrected"] = self._holm_adjust(p_values)
+            report["confirmed"] = (
+                (report["p_value_corrected"] < 0.05)
+                & ((report["kpi"] == "survival_ratio") | (report["cliffs_delta"].abs() > 0.2))
+            ).astype(float)
+        return report
+
+    def full_report(
+        self,
+        comparisons: list[dict] | None = None,
+        apply_holm_correction: bool = True,
+    ) -> pd.DataFrame:
+        """Produce compact hypothesis report across scenario-specific KPIs."""
+        default_comparisons = [
+            {
+                "scenario": "scenario_2_storm_corridor",
+                "kpi": "fatal_per_1k_hrs",
+                "condition_a": MethodCondition.PROPOSED.value,
+                "condition_b": MethodCondition.BASELINE_A.value,
+                "hypothesis": "H1",
+            },
+            {
+                "scenario": "scenario_4_deep_water_rescue",
+                "kpi": "survival_ratio",
+                "condition_a": MethodCondition.PROPOSED.value,
+                "condition_b": MethodCondition.BASELINE_A.value,
+                "hypothesis": "H2",
+            },
+            {
+                "scenario": "scenario_3_blind_shore",
+                "kpi": "fatal_per_1k_hrs",
+                "condition_a": MethodCondition.PROPOSED.value,
+                "condition_b": MethodCondition.BASELINE_B.value,
+                "hypothesis": "H3",
+            },
+        ]
+        return self.evaluate_comparisons(
+            comparisons=comparisons or default_comparisons,
+            apply_holm_correction=apply_holm_correction,
+        )

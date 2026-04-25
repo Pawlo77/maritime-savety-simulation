@@ -387,6 +387,18 @@ Table~\ref{tab:kpis} defines the six KPIs collected per run. KPIs~1--2 test H1, 
 Hypothesis decisions use the Mann-Whitney U test — appropriate for the bounded, non-normal KPI distributions produced by a finite-agent simulation. Effect sizes are reported as Cliff's $\Delta$~\cite{cliff1993}; both $p < 0.05$ and $\Delta > 0.2$ (small effect) are required for H1 and H3 to be confirmed. Confidence intervals are bootstrapped over the 30 seeds. The same seed sequence is applied to all conditions to eliminate seed-selection bias from pairwise comparisons.
 
 % ==================================================================
+\section{Results GUI}
+\label{sec:results-gui}
+% ==================================================================
+
+The Streamlit dashboard provides an analysis workflow designed around experimental decision-making rather than static metric inspection.
+
+The intended workflow is: (i) choose scenario and candidate methods on the \textit{Run} page, (ii) rank methods by a selected KPI with confidence intervals and delta-to-baseline columns on the \textit{Results} page, (iii) confirm statistical significance in the \textit{Hypothesis} page using configurable method pairs, and (iv) inspect representative seeds in \textit{Map Playback}. This sequence links aggregate evidence to concrete run-level dynamics.
+
+\subsection{Current limitations}
+The GUI currently assumes schema-compatible outputs (\texttt{summary.csv}, per-run parquet, and run manifest version), and uncertainty is shown at KPI aggregate level only (no Bayesian posterior model). Future work should add richer event-level uncertainty decomposition and direct export of publication-ready figure bundles.
+
+% ==================================================================
 \section{Discussion}
 \label{sec:discussion}
 % ==================================================================

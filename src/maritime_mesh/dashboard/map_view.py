@@ -6,7 +6,19 @@ import plotly.graph_objects as go
 from maritime_mesh.dashboard.data_access import map_world_size
 
 
-def make_timeline_map(run_df: pd.DataFrame) -> go.Figure:
+def _as_numeric_id(value) -> int | None:
+    """Convert IDs to ints when possible for link matching."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def make_timeline_map(
+    run_df: pd.DataFrame,
+    show_communication_links: bool = False,
+    show_event_markers: bool = True,
+) -> go.Figure:
     """Build animated map with weather probes, vessels, and rescue assets."""
     world_size_nm = map_world_size(run_df=run_df)
     ticks = sorted(run_df["tick"].dropna().unique())
@@ -16,6 +28,7 @@ def make_timeline_map(run_df: pd.DataFrame) -> go.Figure:
     rescue_df = run_df[run_df["entity_type"] == "rescue_asset"]
     event_df = run_df[run_df["entity_type"] == "intervention_event"]
     land_df = run_df[run_df["entity_type"] == "landmass"]
+    link_df = run_df[run_df["entity_type"] == "communication_link"]
 
     def _frame_for_tick(tick: int) -> go.Frame:
         """Build one animation frame for a single tick."""
@@ -23,6 +36,27 @@ def make_timeline_map(run_df: pd.DataFrame) -> go.Figure:
         vessel_tick = vessel_df[vessel_df["tick"] == tick]
         station_tick = station_df[station_df["tick"] == tick]
         rescue_tick = rescue_df[rescue_df["tick"] == tick]
+        link_tick = link_df[link_df["tick"] == tick]
+        node_lookup: dict[int, tuple[float, float]] = {}
+        for _, row in pd.concat([vessel_tick, station_tick], ignore_index=True).iterrows():
+            for candidate in (row.get("vessel_id"), row.get("entity_id")):
+                key = _as_numeric_id(candidate)
+                if key is not None:
+                    node_lookup[key] = (float(row["x_nm"]), float(row["y_nm"]))
+        link_x: list[float | None] = []
+        link_y: list[float | None] = []
+        if show_communication_links:
+            for _, link in link_tick.iterrows():
+                source = _as_numeric_id(link.get("source_id"))
+                target = _as_numeric_id(link.get("target_id"))
+                if source is None or target is None:
+                    continue
+                if source not in node_lookup or target not in node_lookup:
+                    continue
+                start = node_lookup[source]
+                end = node_lookup[target]
+                link_x.extend([start[0], end[0], None])
+                link_y.extend([start[1], end[1], None])
         if "event_kind" in event_df.columns:
             land_collision_tick = event_df[
                 (event_df["tick"] == tick) & (event_df["event_kind"] == "land_collision")
@@ -121,6 +155,14 @@ def make_timeline_map(run_df: pd.DataFrame) -> go.Figure:
                     ),
                 ),
                 go.Scatter(
+                    x=link_x,
+                    y=link_y,
+                    mode="lines",
+                    line={"width": 1.5, "color": "#9467bd"},
+                    name="Communication links",
+                    hovertemplate="Communication relay<extra></extra>",
+                ),
+                go.Scatter(
                     x=land_collision_tick["x_nm"],
                     y=land_collision_tick["y_nm"],
                     mode="markers",
@@ -128,6 +170,15 @@ def make_timeline_map(run_df: pd.DataFrame) -> go.Figure:
                     name="Land collisions",
                     customdata=land_collision_custom,
                     hovertemplate="Grounding vessel=%{customdata[0]}<extra></extra>",
+                )
+                if show_event_markers
+                else go.Scatter(
+                    x=[],
+                    y=[],
+                    mode="markers",
+                    name="Land collisions",
+                    marker={"size": 13, "symbol": "triangle-up", "color": "#8b0000"},
+                    hoverinfo="skip",
                 ),
             ],
         )

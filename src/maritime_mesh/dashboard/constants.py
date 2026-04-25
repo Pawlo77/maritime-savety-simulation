@@ -9,6 +9,15 @@ KPI_COLUMNS = [
     "mean_p_prep",
 ]
 
+KPI_HIGHER_IS_BETTER = {
+    "fatal_per_1k_hrs": False,
+    "collision_per_1k_hrs": False,
+    "survival_ratio": True,
+    "avg_tta_hours": False,
+    "evac_activation_rate": True,
+    "mean_p_prep": True,
+}
+
 SCENARIO_CHOICES = [
     "scenario_1_calm_passage",
     "scenario_2_storm_corridor",

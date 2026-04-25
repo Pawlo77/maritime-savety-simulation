@@ -5,7 +5,6 @@ from pathlib import Path
 import pandas as pd
 
 from maritime_mesh.constants import MACRO_TICK_HOURS
-from maritime_mesh.enums import VesselState
 
 
 class KpiLogger:
@@ -197,12 +196,20 @@ class KpiLogger:
             .tail(1)
             .set_index("vessel_id")
         )
-        fatalities = float((final_states["state"] == VesselState.SUNK.value).sum())
-        survivors = float(final_states["n_survivors"].sum())
+        initial_survivors = (
+            vessel_df.sort_values("tick")
+            .groupby("vessel_id", as_index=False)
+            .head(1)
+            .set_index("vessel_id")["n_survivors"]
+        )
+        final_survivors = final_states["n_survivors"].astype(float)
+        total_exposed_crew = float(initial_survivors.sum())
+        survivors = float(final_survivors.sum())
+        fatalities = max(0.0, total_exposed_crew - survivors)
         return {
             "fatal_per_1k_hrs": (fatalities / total_hours) * 1000.0,
             "collision_per_1k_hrs": (self._collisions / total_hours) * 1000.0,
-            "survival_ratio": survivors / max(1.0, survivors + fatalities),
+            "survival_ratio": survivors / max(1.0, total_exposed_crew),
             "avg_tta_hours": float(pd.Series(self._rescue_tta_hours).mean())
             if self._rescue_tta_hours
             else 0.0,
