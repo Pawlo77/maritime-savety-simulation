@@ -10,7 +10,7 @@ from maritime_mesh.dashboard.constants import (
     display_scenario_name,
 )
 from maritime_mesh.dashboard.data_access import load_summary
-from maritime_mesh.dashboard.ui import info_panel, page_intro
+from maritime_mesh.dashboard.ui import info_panel, page_intro, render_dataframe
 from maritime_mesh.enums import MethodCondition
 from maritime_mesh.experiment.analysis import StatisticalAnalyser
 
@@ -71,7 +71,7 @@ def render(output_dir: Path) -> None:
             index=methods.index(default_b),
             format_func=display_method_name,
         )
-    if st.button("Reset hypothesis filters", use_container_width=False):
+    if st.button("Reset hypothesis filters", width="content"):
         st.rerun()
     if not selected_scenarios:
         st.info("Select at least one scenario to run comparisons.")
@@ -97,4 +97,4 @@ def render(output_dir: Path) -> None:
     if report.empty:
         st.info("No valid comparisons for current filters.")
         return
-    st.dataframe(report, use_container_width=True, hide_index=True)
+    render_dataframe(report, width="stretch", hide_index=True)

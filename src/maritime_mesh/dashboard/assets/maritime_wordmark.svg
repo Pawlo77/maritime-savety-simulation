@@ -1,0 +1,25 @@
+<svg width="680" height="120" viewBox="0 0 680 120" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect x="1.5" y="1.5" width="676.5" height="117" rx="18" fill="#041A2B" stroke="rgba(156, 220, 248, 0.35)"/>
+  <g transform="translate(22,18)">
+    <defs>
+      <linearGradient id="seaWord" x1="10" y1="8" x2="58" y2="60" gradientUnits="userSpaceOnUse">
+        <stop stop-color="#72E2FF"/>
+        <stop offset="1" stop-color="#1089B9"/>
+      </linearGradient>
+      <linearGradient id="hullWord" x1="16" y1="40" x2="52" y2="56" gradientUnits="userSpaceOnUse">
+        <stop stop-color="#0E4060"/>
+        <stop offset="1" stop-color="#061D2F"/>
+      </linearGradient>
+    </defs>
+    <rect x="2.5" y="2.5" width="63" height="63" rx="15" fill="#051A2A" stroke="rgba(164, 224, 255, 0.44)"/>
+    <path d="M17 45.5C17 45.5 23.5 41 34 41C44.5 41 51 45.5 51 45.5V49.5C51 49.5 44.5 54 34 54C23.5 54 17 49.5 17 49.5V45.5Z" fill="url(#hullWord)"/>
+    <path d="M20 49.8C20 49.8 24.8 52.8 34 52.8C43.2 52.8 48 49.8 48 49.8" stroke="#8BDCFB" stroke-width="1.6" stroke-linecap="round"/>
+    <path d="M34 16V41.2" stroke="#A5E9FF" stroke-width="2.1" stroke-linecap="round"/>
+    <path d="M34.6 19L48.5 33C48.5 33 40.4 34 34.6 31V19Z" fill="url(#seaWord)"/>
+    <path d="M33.4 23L21 36.8C21 36.8 27.7 37.4 33.4 35.1V23Z" fill="#3EC6EE"/>
+    <path d="M17.5 57C17.5 57 22 54.2 27.2 57C32.3 59.8 36.7 57 36.7 57" stroke="#6CD4F4" stroke-opacity="0.9" stroke-width="1.6" stroke-linecap="round"/>
+    <path d="M31.3 57C31.3 57 35.8 54.2 41 57C46.2 59.8 50.5 57 50.5 57" stroke="#6CD4F4" stroke-opacity="0.9" stroke-width="1.6" stroke-linecap="round"/>
+  </g>
+  <text x="108" y="54" fill="#E6F6FF" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="28" font-weight="700">Maritime Mesh Command</text>
+  <text x="108" y="82" fill="#8FC4DF" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="14" font-weight="500">Maritime Intelligence Suite</text>
+</svg>

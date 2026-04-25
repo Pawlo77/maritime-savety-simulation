@@ -42,7 +42,7 @@ def render(output_dir: Path) -> None:
         (
             "Preparedness score is vessel readiness; risk blend score is fused "
             "hazard estimate; shore signal indicates coastal message reception "
-            "at current tick."
+            "at current tick. Weather layer selector controls the heatmap metric."
         ),
     )
     scenario = st.selectbox(
@@ -58,7 +58,7 @@ def render(output_dir: Path) -> None:
         format_func=display_method_name,
         key="playback_method_filter",
     )
-    if st.button("Reset playback filters", use_container_width=False):
+    if st.button("Reset playback filters", width="content"):
         st.session_state["playback_method_filter"] = sorted(results["method"].unique())
         st.session_state["playback_seed_mode"] = "Manual seed"
         st.rerun()
@@ -130,6 +130,12 @@ def render(output_dir: Path) -> None:
             show_links = st.toggle("Show active communication links", value=True)
         with col_b:
             show_markers = st.toggle("Show event markers", value=True)
+        weather_layer = st.selectbox(
+            "Weather heatmap layer",
+            options=["Hazard", "Sea state", "Wind", "Low visibility"],
+            index=0,
+            help="Choose which weather component to visualize in the map background.",
+        )
         linger_ticks = st.slider(
             "Hide collided vessels after this many ticks",
             min_value=0,
@@ -146,8 +152,9 @@ def render(output_dir: Path) -> None:
                 show_communication_links=show_links,
                 show_event_markers=show_markers,
                 collision_vessel_linger_ticks=int(linger_ticks),
+                weather_layer=weather_layer,
             ),
-            use_container_width=True,
+            width="stretch",
         )
         if "entity_type" in run_df.columns:
             event_series = (
@@ -166,4 +173,4 @@ def render(output_dir: Path) -> None:
                     title="Communication and intervention events per tick",
                 )
                 apply_plotly_theme(event_fig, height=340)
-                st.plotly_chart(event_fig, use_container_width=True)
+                st.plotly_chart(event_fig, width="stretch")

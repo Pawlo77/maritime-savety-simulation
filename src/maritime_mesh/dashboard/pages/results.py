@@ -15,7 +15,13 @@ from maritime_mesh.dashboard.constants import (
     display_scenario_name,
 )
 from maritime_mesh.dashboard.data_access import load_summary
-from maritime_mesh.dashboard.ui import apply_plotly_theme, info_panel, page_intro, section_intro
+from maritime_mesh.dashboard.ui import (
+    apply_plotly_theme,
+    info_panel,
+    page_intro,
+    render_dataframe,
+    section_intro,
+)
 from maritime_mesh.experiment.analysis import StatisticalAnalyser
 
 
@@ -114,9 +120,9 @@ def _render_seed_outliers(filtered: pd.DataFrame, kpi: str) -> None:
     top = ranked.groupby("method", as_index=False).head(top_n).assign(bucket="Top")
     bottom = ranked.groupby("method", as_index=False).tail(top_n).assign(bucket="Bottom")
     outliers = pd.concat([top, bottom], ignore_index=True).sort_values(["method", "bucket", "seed"])
-    st.dataframe(
+    render_dataframe(
         outliers[["method", "seed", "scenario", kpi, "bucket"]],
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
     )
 
@@ -220,7 +226,7 @@ def render(output_dir: Path) -> None:
         if selected_kpis
         else None
     )
-    if st.button("Reset result filters", use_container_width=False):
+    if st.button("Reset result filters", width="content"):
         st.session_state["results_scenario_mode"] = "Single scenario"
         st.session_state["results_method_filter"] = sorted(results["method"].unique())
         st.session_state["results_selected_kpis"] = (
@@ -248,7 +254,7 @@ def render(output_dir: Path) -> None:
             ),
         )
         _render_kpi_cards(filtered)
-        st.dataframe(filtered, use_container_width=True, hide_index=True)
+        render_dataframe(filtered, width="stretch", hide_index=True)
 
     with tab_explorer:
         if not selected_kpis:
@@ -267,13 +273,16 @@ def render(output_dir: Path) -> None:
                         filtered,
                         x="method" if scenario_mode == "Single scenario" else "scenario",
                         y=kpi,
-                        color="method",
                         points="all",
                         hover_data=["seed", "scenario"],
                     )
+                    fig_box.update_traces(
+                        marker={"color": "#35b8e7", "line": {"color": "#8fdfff", "width": 0.6}},
+                        line={"color": "#6fd6ff", "width": 2},
+                    )
                     fig_box.update_layout(showlegend=False)
                     apply_plotly_theme(fig_box, height=420)
-                    st.plotly_chart(fig_box, use_container_width=True)
+                    st.plotly_chart(fig_box, width="stretch")
                 with col_b:
                     means = filtered.groupby("method", as_index=False)[kpi].mean()
                     means = means.sort_values(
@@ -283,13 +292,13 @@ def render(output_dir: Path) -> None:
                         means,
                         x="method",
                         y=kpi,
-                        color="method",
                         text_auto=".3f",
                         barmode="group",
                     )
+                    fig_mean.update_traces(marker_color="#35b8e7")
                     fig_mean.update_layout(showlegend=False)
                     apply_plotly_theme(fig_mean, height=420)
-                    st.plotly_chart(fig_mean, use_container_width=True)
+                    st.plotly_chart(fig_mean, width="stretch")
             with tab_multi:
                 long_df = filtered.melt(
                     id_vars=["scenario", "method", "seed"],
@@ -302,15 +311,15 @@ def render(output_dir: Path) -> None:
                     means_long,
                     x="method",
                     y="value",
-                    color="method",
                     facet_col="kpi",
                     facet_col_wrap=2,
                     barmode="group",
                     text_auto=".3f",
                 )
+                fig_multi.update_traces(marker_color="#35b8e7")
                 fig_multi.update_layout(showlegend=False)
                 apply_plotly_theme(fig_multi, height=700)
-                st.plotly_chart(fig_multi, use_container_width=True)
+                st.plotly_chart(fig_multi, width="stretch")
 
     with tab_ranking:
         if not focus_kpi:
@@ -328,7 +337,7 @@ def render(output_dir: Path) -> None:
                 kpi=focus_kpi,
                 baseline_method=baseline_method,
             )
-            st.dataframe(
+            render_dataframe(
                 ranking_table[
                     [
                         "rank",
@@ -342,7 +351,7 @@ def render(output_dir: Path) -> None:
                         "delta_pct_vs_baseline",
                     ]
                 ],
-                use_container_width=True,
+                width="stretch",
                 hide_index=True,
             )
 
@@ -368,7 +377,7 @@ def render(output_dir: Path) -> None:
             if significance.empty:
                 st.info("No non-baseline methods available for significance testing.")
             else:
-                st.dataframe(significance, use_container_width=True, hide_index=True)
+                render_dataframe(significance, width="stretch", hide_index=True)
 
     with tab_outliers:
         if not focus_kpi:
@@ -391,4 +400,4 @@ def render(output_dir: Path) -> None:
         means_table = filtered.groupby(["scenario", "method"], as_index=False)[
             available_kpis
         ].mean()
-        st.dataframe(means_table, use_container_width=True, hide_index=True)
+        render_dataframe(means_table, width="stretch", hide_index=True)

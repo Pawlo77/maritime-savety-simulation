@@ -36,7 +36,40 @@ class MaritimeModel(Model):
         super().__init__()
         self.config = config
         self.rng = np.random.default_rng(config.seed)
-        self.weather_field = WeatherField(rng=self.rng, world_size_nm=config.world_size_nm)
+        self.weather_field = WeatherField(
+            rng=self.rng,
+            world_size_nm=config.world_size_nm,
+            weather_preset=config.weather_preset,
+            weather_unpredictability=config.weather_unpredictability,
+            weather_calm_to_storm_prob=config.weather_calm_to_storm_prob,
+            weather_storm_to_calm_prob=config.weather_storm_to_calm_prob,
+            weather_storm_spawn_rate=config.weather_storm_spawn_rate,
+            weather_max_systems=config.weather_max_systems,
+            weather_system_radius_min_cells=config.weather_system_radius_min_cells,
+            weather_system_radius_max_cells=config.weather_system_radius_max_cells,
+            weather_system_intensity_min=config.weather_system_intensity_min,
+            weather_system_intensity_max=config.weather_system_intensity_max,
+            weather_system_drift_speed_cells=config.weather_system_drift_speed_cells,
+            weather_system_drift_direction_deg=config.weather_system_drift_direction_deg,
+            weather_system_drift_jitter_deg=config.weather_system_drift_jitter_deg,
+            weather_front_strength=config.weather_front_strength,
+            weather_background_persistence=config.weather_background_persistence,
+            weather_channel_persistence_sea=config.weather_channel_persistence_sea,
+            weather_channel_persistence_visibility=config.weather_channel_persistence_visibility,
+            weather_channel_persistence_wind=config.weather_channel_persistence_wind,
+            weather_innovation_scale_sea=config.weather_innovation_scale_sea,
+            weather_innovation_scale_visibility=config.weather_innovation_scale_visibility,
+            weather_innovation_scale_wind=config.weather_innovation_scale_wind,
+            weather_shock_probability=config.weather_shock_probability,
+            weather_shock_scale=config.weather_shock_scale,
+            weather_coupling_sea_wind=config.weather_coupling_sea_wind,
+            weather_coupling_sea_visibility=config.weather_coupling_sea_visibility,
+            weather_coupling_wind_visibility=config.weather_coupling_wind_visibility,
+            weather_gradient_limit=config.weather_gradient_limit,
+            weather_weight_sea_state=config.weather_weight_sea_state,
+            weather_weight_visibility=config.weather_weight_visibility,
+            weather_weight_wind=config.weather_weight_wind,
+        )
         self.world_size_nm = config.world_size_nm
         self.land = WorldLand.default_for_world_size(
             self.world_size_nm, profile=config.land_profile

@@ -34,6 +34,38 @@ LAND_PROFILE_LABELS = {
     "natural_coast": "Natural Coast (recommended)",
     "legacy_rectangles": "Legacy Rectangles",
 }
+WEATHER_PRESET_DEFAULTS: dict[str, dict[str, float | int]] = {
+    "calm": {
+        "weather_calm_to_storm_prob": 0.01,
+        "weather_storm_to_calm_prob": 0.20,
+        "weather_storm_spawn_rate": 0.10,
+        "weather_max_systems": 1,
+        "weather_system_radius_min_cells": 3,
+        "weather_system_radius_max_cells": 8,
+        "weather_system_intensity_min": 0.30,
+        "weather_system_intensity_max": 0.65,
+    },
+    "mixed": {
+        "weather_calm_to_storm_prob": 0.03,
+        "weather_storm_to_calm_prob": 0.08,
+        "weather_storm_spawn_rate": 0.25,
+        "weather_max_systems": 3,
+        "weather_system_radius_min_cells": 4,
+        "weather_system_radius_max_cells": 10,
+        "weather_system_intensity_min": 0.45,
+        "weather_system_intensity_max": 0.95,
+    },
+    "stormy": {
+        "weather_calm_to_storm_prob": 0.08,
+        "weather_storm_to_calm_prob": 0.04,
+        "weather_storm_spawn_rate": 0.45,
+        "weather_max_systems": 4,
+        "weather_system_radius_min_cells": 5,
+        "weather_system_radius_max_cells": 12,
+        "weather_system_intensity_min": 0.60,
+        "weather_system_intensity_max": 1.00,
+    },
+}
 
 
 def _default_shore_stations(world_size_nm: float) -> list[tuple[float, float]]:
@@ -137,10 +169,17 @@ def _make_setup_preview_map(
     shore_broadcast_radius_nm: float,
     land_profile: str,
     land_clearance_nm: float,
+    weather_preview_config: dict[str, float | int | str] | None = None,
 ) -> go.Figure:
     """Build setup preview map with land, routes, shore, and endpoint spawn bounds."""
     figure = go.Figure()
-    weather_field = WeatherField(rng=np.random.default_rng(0), world_size_nm=world_size_nm)
+    weather_field = WeatherField(
+        rng=np.random.default_rng(0),
+        world_size_nm=world_size_nm,
+        **(weather_preview_config or {}),
+    )
+    for _ in range(4):
+        weather_field.step()
     weather_grid = np.array(
         [
             [
@@ -161,10 +200,10 @@ def _make_setup_preview_map(
             x=axis_points,
             y=axis_points,
             z=weather_grid,
-            colorscale=[(0.0, "#ffffff"), (1.0, "#1f5fbf")],
+            colorscale="YlOrRd",
             zmin=0.0,
             zmax=1.0,
-            opacity=0.32,
+            opacity=0.38,
             name="Weather hazard",
             colorbar={"title": "Hazard"},
             hovertemplate=("Weather<br>x=%{x:.1f}, y=%{y:.1f}<br>hazard=%{z:.2f}<extra></extra>"),
@@ -297,7 +336,7 @@ def _make_setup_preview_map(
             "text": f"Setup preview (land clearance {land_clearance_nm:.1f} nm)",
             "x": 0.0,
             "xanchor": "left",
-            "y": 0.99,
+            "y": 0.98,
         },
         xaxis={
             "range": [0, world_size_nm],
@@ -316,17 +355,30 @@ def _make_setup_preview_map(
             "fixedrange": True,
         },
         height=820,
+    )
+    figure = apply_plotly_theme(figure, height=820)
+    # Override shared defaults so long route legends do not overlap title.
+    figure.update_layout(
+        margin={"l": 24, "r": 24, "t": 128, "b": 24},
         legend={
             "orientation": "h",
             "yanchor": "bottom",
-            "y": 1.06,
+            "y": 1.03,
             "xanchor": "left",
             "x": 0.0,
-            "bgcolor": "rgba(255,255,255,0.8)",
+            "bgcolor": "rgba(8, 35, 56, 0.72)",
             "groupclick": "togglegroup",
+            "font": {"size": 11},
+        },
+        title={
+            "text": f"Setup preview (land clearance {land_clearance_nm:.1f} nm)",
+            "x": 0.0,
+            "xanchor": "left",
+            "y": 0.985,
+            "font": {"size": 22, "color": "#e8f6ff"},
         },
     )
-    return apply_plotly_theme(figure, height=820)
+    return figure
 
 
 def _lane_builder(
@@ -374,7 +426,7 @@ def _lane_builder(
         )
     with col_add:
         st.write("")
-        if st.button("Add point", use_container_width=True):
+        if st.button("Add point", width="stretch"):
             new_point = (float(x_nm), float(y_nm))
             lane_points = st.session_state.lane_store.setdefault(lane_name, [])
             if land.distance_to_land(new_point) <= land_clearance_nm:
@@ -396,21 +448,21 @@ def _lane_builder(
 
     col_undo, col_remove_lane, col_clear_lanes, col_reset_defaults = st.columns(4)
     with col_undo:
-        if st.button("Undo last point", use_container_width=True):
+        if st.button("Undo last point", width="stretch"):
             points = st.session_state.lane_store.get(lane_name, [])
             if points:
                 points.pop()
                 st.rerun()
     with col_remove_lane:
-        if st.button("Remove selected lane", use_container_width=True) and lane_name != "new_lane":
+        if st.button("Remove selected lane", width="stretch") and lane_name != "new_lane":
             st.session_state.lane_store.pop(lane_name, None)
             st.rerun()
     with col_clear_lanes:
-        if st.button("Clear all lanes", use_container_width=True):
+        if st.button("Clear all lanes", width="stretch"):
             st.session_state.lane_store = {}
             st.rerun()
     with col_reset_defaults:
-        if st.button("Reset default lanes", use_container_width=True):
+        if st.button("Reset default lanes", width="stretch"):
             st.session_state.lane_store = _default_lane_store(world_size_nm)
             st.rerun()
 
@@ -555,7 +607,7 @@ def _shore_station_builder(world_size_nm: float) -> tuple[tuple[float, float], .
         )
     with col_add:
         st.write("")
-        if st.button("Add shore station", use_container_width=True):
+        if st.button("Add shore station", width="stretch"):
             st.session_state.shore_station_store.append((float(shore_x), float(shore_y)))
 
     if st.session_state.shore_station_store:
@@ -585,7 +637,7 @@ def _shore_station_builder(world_size_nm: float) -> tuple[tuple[float, float], .
         st.write("")
         if (
             selected is not None
-            and st.button("Remove selected", use_container_width=True)
+            and st.button("Remove selected", width="stretch")
             and st.session_state.shore_station_store
         ):
             selected_idx = shore_labels.index(selected)
@@ -593,7 +645,7 @@ def _shore_station_builder(world_size_nm: float) -> tuple[tuple[float, float], .
             st.rerun()
     with col_clear:
         st.write("")
-        if st.button("Reset default shores", use_container_width=True):
+        if st.button("Reset default shores", width="stretch"):
             st.session_state.shore_station_store = _default_shore_stations(world_size_nm)
             st.rerun()
 
@@ -621,11 +673,12 @@ def render(output_dir: Path) -> None:
     (
         tab_basics,
         tab_population,
+        tab_weather,
         tab_shore,
         tab_lanes,
         tab_comms,
         tab_preview,
-    ) = st.tabs(["Basics", "Population", "Shore & Spawn", "Lanes", "Comms", "Preview"])
+    ) = st.tabs(["Basics", "Population", "Weather", "Shore & Spawn", "Lanes", "Comms", "Preview"])
 
     with tab_basics:
         section_intro(
@@ -729,6 +782,183 @@ def render(output_dir: Path) -> None:
                 "Higher values mean noisier shore estimates."
             ),
         )
+
+    with tab_weather:
+        section_intro(
+            "Weather Engine",
+            "Pick a realism preset, then tune advanced stochastic parameters if needed.",
+        )
+        weather_preset = st.selectbox(
+            "Weather preset",
+            options=["calm", "mixed", "stormy", "custom"],
+            index=1,
+            help="Preset controls baseline storminess and system density.",
+        )
+        weather_unpredictability = st.slider(
+            "Unpredictability",
+            min_value=0.0,
+            max_value=1.0,
+            value=0.5,
+            help="Controls volatility and rare weather shocks.",
+        )
+        preset = WEATHER_PRESET_DEFAULTS.get(weather_preset, WEATHER_PRESET_DEFAULTS["mixed"])
+        col_regime_a, col_regime_b, col_regime_c = st.columns(3)
+        with col_regime_a:
+            weather_calm_to_storm_prob = st.number_input(
+                "Calm→Storm prob/tick",
+                min_value=0.0,
+                max_value=1.0,
+                value=float(preset["weather_calm_to_storm_prob"]),
+                step=0.01,
+            )
+        with col_regime_b:
+            weather_storm_to_calm_prob = st.number_input(
+                "Storm→Calm prob/tick",
+                min_value=0.0,
+                max_value=1.0,
+                value=float(preset["weather_storm_to_calm_prob"]),
+                step=0.01,
+            )
+        with col_regime_c:
+            weather_storm_spawn_rate = st.number_input(
+                "Storm system spawn rate",
+                min_value=0.0,
+                max_value=1.0,
+                value=float(preset["weather_storm_spawn_rate"]),
+                step=0.01,
+            )
+        with st.expander("Advanced weather parameters", expanded=False):
+            col_sys_a, col_sys_b, col_sys_c = st.columns(3)
+            with col_sys_a:
+                weather_max_systems = st.number_input(
+                    "Max active circular systems",
+                    min_value=0,
+                    max_value=12,
+                    value=int(preset["weather_max_systems"]),
+                    step=1,
+                )
+                weather_system_radius_min_cells = st.number_input(
+                    "System radius min (cells)",
+                    min_value=1,
+                    max_value=25,
+                    value=int(preset["weather_system_radius_min_cells"]),
+                    step=1,
+                )
+                weather_system_radius_max_cells = st.number_input(
+                    "System radius max (cells)",
+                    min_value=1,
+                    max_value=30,
+                    value=int(preset["weather_system_radius_max_cells"]),
+                    step=1,
+                )
+                weather_system_intensity_min = st.slider(
+                    "System intensity min",
+                    min_value=0.0,
+                    max_value=1.0,
+                    value=float(preset["weather_system_intensity_min"]),
+                )
+                weather_system_intensity_max = st.slider(
+                    "System intensity max",
+                    min_value=0.0,
+                    max_value=1.0,
+                    value=float(preset["weather_system_intensity_max"]),
+                )
+            with col_sys_b:
+                weather_system_drift_speed_cells = st.number_input(
+                    "System drift speed (cells/tick)",
+                    min_value=0.0,
+                    max_value=5.0,
+                    value=0.6,
+                    step=0.05,
+                )
+                weather_system_drift_direction_deg = st.number_input(
+                    "Dominant drift direction (deg)",
+                    min_value=-180.0,
+                    max_value=180.0,
+                    value=35.0,
+                    step=1.0,
+                )
+                weather_system_drift_jitter_deg = st.number_input(
+                    "Direction jitter (deg)",
+                    min_value=0.0,
+                    max_value=180.0,
+                    value=18.0,
+                    step=1.0,
+                )
+                weather_front_strength = st.slider(
+                    "Front structure strength", min_value=0.0, max_value=1.0, value=0.12
+                )
+                weather_gradient_limit = st.slider(
+                    "Gradient limit", min_value=0.0, max_value=0.5, value=0.12
+                )
+            with col_sys_c:
+                weather_background_persistence = st.slider(
+                    "Background persistence", min_value=0.0, max_value=1.0, value=0.92
+                )
+                weather_channel_persistence_sea = st.slider(
+                    "Sea persistence", min_value=0.0, max_value=1.0, value=0.95
+                )
+                weather_channel_persistence_visibility = st.slider(
+                    "Visibility persistence", min_value=0.0, max_value=1.0, value=0.90
+                )
+                weather_channel_persistence_wind = st.slider(
+                    "Wind persistence", min_value=0.0, max_value=1.0, value=0.93
+                )
+                weather_shock_probability = st.slider(
+                    "Shock probability", min_value=0.0, max_value=1.0, value=0.015
+                )
+                weather_shock_scale = st.slider(
+                    "Shock scale", min_value=0.0, max_value=1.0, value=0.20
+                )
+            st.markdown("**Innovation and coupling**")
+            col_noise_a, col_noise_b = st.columns(2)
+            with col_noise_a:
+                weather_innovation_scale_sea = st.number_input(
+                    "Sea innovation scale", min_value=0.0, max_value=1.0, value=0.02, step=0.005
+                )
+                weather_innovation_scale_visibility = st.number_input(
+                    "Visibility innovation scale",
+                    min_value=0.0,
+                    max_value=1.0,
+                    value=0.03,
+                    step=0.005,
+                )
+                weather_innovation_scale_wind = st.number_input(
+                    "Wind innovation scale", min_value=0.0, max_value=1.0, value=0.025, step=0.005
+                )
+            with col_noise_b:
+                weather_coupling_sea_wind = st.slider(
+                    "Coupling sea↔wind", min_value=-1.0, max_value=1.0, value=0.35
+                )
+                weather_coupling_sea_visibility = st.slider(
+                    "Coupling sea↔visibility", min_value=-1.0, max_value=1.0, value=-0.20
+                )
+                weather_coupling_wind_visibility = st.slider(
+                    "Coupling wind↔visibility", min_value=-1.0, max_value=1.0, value=-0.25
+                )
+            st.markdown("**Hazard channel weights**")
+            w_col_a, w_col_b, w_col_c = st.columns(3)
+            with w_col_a:
+                weather_weight_sea_state = st.slider(
+                    "Weight: sea state", min_value=0.0, max_value=1.0, value=0.4
+                )
+            with w_col_b:
+                weather_weight_visibility = st.slider(
+                    "Weight: 1-visibility", min_value=0.0, max_value=1.0, value=0.3
+                )
+            with w_col_c:
+                weather_weight_wind = st.slider(
+                    "Weight: wind", min_value=0.0, max_value=1.0, value=0.3
+                )
+        if weather_system_radius_min_cells > weather_system_radius_max_cells:
+            st.error("Weather radius min must be <= radius max.")
+            return
+        if weather_system_intensity_min > weather_system_intensity_max:
+            st.error("Weather intensity min must be <= intensity max.")
+            return
+        if weather_weight_sea_state + weather_weight_visibility + weather_weight_wind <= 0.0:
+            st.error("At least one weather hazard weight must be > 0.")
+            return
 
     with tab_shore:
         section_intro(
@@ -840,6 +1070,38 @@ def render(output_dir: Path) -> None:
             ),
         )
         preview_lane_store = {name: list(points) for name, points in lane_definitions}
+        weather_preview_config = {
+            "weather_preset": weather_preset,
+            "weather_unpredictability": float(weather_unpredictability),
+            "weather_calm_to_storm_prob": float(weather_calm_to_storm_prob),
+            "weather_storm_to_calm_prob": float(weather_storm_to_calm_prob),
+            "weather_storm_spawn_rate": float(weather_storm_spawn_rate),
+            "weather_max_systems": int(weather_max_systems),
+            "weather_system_radius_min_cells": int(weather_system_radius_min_cells),
+            "weather_system_radius_max_cells": int(weather_system_radius_max_cells),
+            "weather_system_intensity_min": float(weather_system_intensity_min),
+            "weather_system_intensity_max": float(weather_system_intensity_max),
+            "weather_system_drift_speed_cells": float(weather_system_drift_speed_cells),
+            "weather_system_drift_direction_deg": float(weather_system_drift_direction_deg),
+            "weather_system_drift_jitter_deg": float(weather_system_drift_jitter_deg),
+            "weather_front_strength": float(weather_front_strength),
+            "weather_background_persistence": float(weather_background_persistence),
+            "weather_channel_persistence_sea": float(weather_channel_persistence_sea),
+            "weather_channel_persistence_visibility": float(weather_channel_persistence_visibility),
+            "weather_channel_persistence_wind": float(weather_channel_persistence_wind),
+            "weather_innovation_scale_sea": float(weather_innovation_scale_sea),
+            "weather_innovation_scale_visibility": float(weather_innovation_scale_visibility),
+            "weather_innovation_scale_wind": float(weather_innovation_scale_wind),
+            "weather_shock_probability": float(weather_shock_probability),
+            "weather_shock_scale": float(weather_shock_scale),
+            "weather_coupling_sea_wind": float(weather_coupling_sea_wind),
+            "weather_coupling_sea_visibility": float(weather_coupling_sea_visibility),
+            "weather_coupling_wind_visibility": float(weather_coupling_wind_visibility),
+            "weather_gradient_limit": float(weather_gradient_limit),
+            "weather_weight_sea_state": float(weather_weight_sea_state),
+            "weather_weight_visibility": float(weather_weight_visibility),
+            "weather_weight_wind": float(weather_weight_wind),
+        }
         setup_preview = _make_setup_preview_map(
             world_size_nm=world_size_nm,
             lane_store=preview_lane_store,
@@ -850,16 +1112,17 @@ def render(output_dir: Path) -> None:
             shore_broadcast_radius_nm=float(shore_broadcast_radius_nm),
             land_profile=land_profile,
             land_clearance_nm=float(land_clearance_nm),
+            weather_preview_config=weather_preview_config,
         )
         if land_clearance_nm > 0.0:
             st.caption(
                 f"Active shoreline safety clearance: {float(land_clearance_nm):.1f} nm "
                 "(routes and spawn must remain outside this band)."
             )
-        st.plotly_chart(setup_preview, use_container_width=True)
+        st.plotly_chart(setup_preview, width="stretch")
 
     st.divider()
-    if st.button("Run Experiment Matrix", type="primary", use_container_width=True):
+    if st.button("Run Experiment Matrix", type="primary", width="stretch"):
         if not selected_scenario_names:
             st.error("Select at least one scenario in Basics to define the experiment context.")
             return
@@ -899,6 +1162,38 @@ def render(output_dir: Path) -> None:
                     radio_range_falloff=float(radio_range_falloff),
                     radio_weather_interference=float(radio_weather_interference),
                     radio_packet_loss_rate=float(radio_packet_loss_rate),
+                    weather_preset=weather_preset,
+                    weather_unpredictability=float(weather_unpredictability),
+                    weather_calm_to_storm_prob=float(weather_calm_to_storm_prob),
+                    weather_storm_to_calm_prob=float(weather_storm_to_calm_prob),
+                    weather_storm_spawn_rate=float(weather_storm_spawn_rate),
+                    weather_max_systems=int(weather_max_systems),
+                    weather_system_radius_min_cells=int(weather_system_radius_min_cells),
+                    weather_system_radius_max_cells=int(weather_system_radius_max_cells),
+                    weather_system_intensity_min=float(weather_system_intensity_min),
+                    weather_system_intensity_max=float(weather_system_intensity_max),
+                    weather_system_drift_speed_cells=float(weather_system_drift_speed_cells),
+                    weather_system_drift_direction_deg=float(weather_system_drift_direction_deg),
+                    weather_system_drift_jitter_deg=float(weather_system_drift_jitter_deg),
+                    weather_front_strength=float(weather_front_strength),
+                    weather_background_persistence=float(weather_background_persistence),
+                    weather_channel_persistence_sea=float(weather_channel_persistence_sea),
+                    weather_channel_persistence_visibility=float(
+                        weather_channel_persistence_visibility
+                    ),
+                    weather_channel_persistence_wind=float(weather_channel_persistence_wind),
+                    weather_innovation_scale_sea=float(weather_innovation_scale_sea),
+                    weather_innovation_scale_visibility=float(weather_innovation_scale_visibility),
+                    weather_innovation_scale_wind=float(weather_innovation_scale_wind),
+                    weather_shock_probability=float(weather_shock_probability),
+                    weather_shock_scale=float(weather_shock_scale),
+                    weather_coupling_sea_wind=float(weather_coupling_sea_wind),
+                    weather_coupling_sea_visibility=float(weather_coupling_sea_visibility),
+                    weather_coupling_wind_visibility=float(weather_coupling_wind_visibility),
+                    weather_gradient_limit=float(weather_gradient_limit),
+                    weather_weight_sea_state=float(weather_weight_sea_state),
+                    weather_weight_visibility=float(weather_weight_visibility),
+                    weather_weight_wind=float(weather_weight_wind),
                     land_profile=land_profile,
                     land_clearance_nm=float(land_clearance_nm),
                     route_start_near_shore_nm=ROUTE_START_NEAR_SHORE_NM,

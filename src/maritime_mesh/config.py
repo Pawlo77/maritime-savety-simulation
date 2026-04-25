@@ -91,6 +91,36 @@ class SimulationConfig:
     lane_endpoint_spawn_weights: tuple[tuple[str, tuple[float, float]], ...] = field(
         default_factory=tuple
     )
+    weather_preset: str = "mixed"
+    weather_unpredictability: float = 0.5
+    weather_calm_to_storm_prob: float = 0.03
+    weather_storm_to_calm_prob: float = 0.08
+    weather_storm_spawn_rate: float = 0.25
+    weather_max_systems: int = 3
+    weather_system_radius_min_cells: int = 4
+    weather_system_radius_max_cells: int = 10
+    weather_system_intensity_min: float = 0.45
+    weather_system_intensity_max: float = 0.95
+    weather_system_drift_speed_cells: float = 0.6
+    weather_system_drift_direction_deg: float = 35.0
+    weather_system_drift_jitter_deg: float = 18.0
+    weather_front_strength: float = 0.12
+    weather_background_persistence: float = 0.92
+    weather_channel_persistence_sea: float = 0.95
+    weather_channel_persistence_visibility: float = 0.90
+    weather_channel_persistence_wind: float = 0.93
+    weather_innovation_scale_sea: float = 0.02
+    weather_innovation_scale_visibility: float = 0.03
+    weather_innovation_scale_wind: float = 0.025
+    weather_shock_probability: float = 0.015
+    weather_shock_scale: float = 0.20
+    weather_coupling_sea_wind: float = 0.35
+    weather_coupling_sea_visibility: float = -0.20
+    weather_coupling_wind_visibility: float = -0.25
+    weather_gradient_limit: float = 0.12
+    weather_weight_sea_state: float = 0.4
+    weather_weight_visibility: float = 0.3
+    weather_weight_wind: float = 0.3
 
     def __post_init__(self) -> None:
         """Validate simulation-level invariants used by the engine."""
@@ -145,3 +175,74 @@ class SimulationConfig:
                 raise ValueError("Each lane endpoint weight must contain start and end weights.")
             if weights[0] < 0.0 or weights[1] < 0.0:
                 raise ValueError("Lane endpoint spawn weights must be >= 0.")
+        if self.weather_preset not in {"calm", "mixed", "stormy", "custom"}:
+            raise ValueError("weather_preset must be calm, mixed, stormy, or custom.")
+        if not 0.0 <= self.weather_unpredictability <= 1.0:
+            raise ValueError("weather_unpredictability must be in [0.0, 1.0].")
+        if not 0.0 <= self.weather_calm_to_storm_prob <= 1.0:
+            raise ValueError("weather_calm_to_storm_prob must be in [0.0, 1.0].")
+        if not 0.0 <= self.weather_storm_to_calm_prob <= 1.0:
+            raise ValueError("weather_storm_to_calm_prob must be in [0.0, 1.0].")
+        if not 0.0 <= self.weather_storm_spawn_rate <= 1.0:
+            raise ValueError("weather_storm_spawn_rate must be in [0.0, 1.0].")
+        if self.weather_max_systems < 0:
+            raise ValueError("weather_max_systems must be >= 0.")
+        if self.weather_system_radius_min_cells <= 0:
+            raise ValueError("weather_system_radius_min_cells must be > 0.")
+        if self.weather_system_radius_max_cells < self.weather_system_radius_min_cells:
+            raise ValueError(
+                "weather_system_radius_max_cells must be >= weather_system_radius_min_cells."
+            )
+        if not 0.0 <= self.weather_system_intensity_min <= 1.0:
+            raise ValueError("weather_system_intensity_min must be in [0.0, 1.0].")
+        if not 0.0 <= self.weather_system_intensity_max <= 1.0:
+            raise ValueError("weather_system_intensity_max must be in [0.0, 1.0].")
+        if self.weather_system_intensity_max < self.weather_system_intensity_min:
+            raise ValueError(
+                "weather_system_intensity_max must be >= weather_system_intensity_min."
+            )
+        if self.weather_system_drift_speed_cells < 0.0:
+            raise ValueError("weather_system_drift_speed_cells must be >= 0.")
+        if not 0.0 <= self.weather_front_strength <= 1.0:
+            raise ValueError("weather_front_strength must be in [0.0, 1.0].")
+        if not 0.0 <= self.weather_background_persistence <= 1.0:
+            raise ValueError("weather_background_persistence must be in [0.0, 1.0].")
+        for name, value in (
+            ("weather_channel_persistence_sea", self.weather_channel_persistence_sea),
+            ("weather_channel_persistence_visibility", self.weather_channel_persistence_visibility),
+            ("weather_channel_persistence_wind", self.weather_channel_persistence_wind),
+        ):
+            if not 0.0 <= value <= 1.0:
+                raise ValueError(f"{name} must be in [0.0, 1.0].")
+        for name, value in (
+            ("weather_innovation_scale_sea", self.weather_innovation_scale_sea),
+            ("weather_innovation_scale_visibility", self.weather_innovation_scale_visibility),
+            ("weather_innovation_scale_wind", self.weather_innovation_scale_wind),
+            ("weather_shock_scale", self.weather_shock_scale),
+            ("weather_gradient_limit", self.weather_gradient_limit),
+        ):
+            if value < 0.0:
+                raise ValueError(f"{name} must be >= 0.")
+        if not 0.0 <= self.weather_shock_probability <= 1.0:
+            raise ValueError("weather_shock_probability must be in [0.0, 1.0].")
+        for name, value in (
+            ("weather_coupling_sea_wind", self.weather_coupling_sea_wind),
+            ("weather_coupling_sea_visibility", self.weather_coupling_sea_visibility),
+            ("weather_coupling_wind_visibility", self.weather_coupling_wind_visibility),
+        ):
+            if not -1.0 <= value <= 1.0:
+                raise ValueError(f"{name} must be in [-1.0, 1.0].")
+        for name, value in (
+            ("weather_weight_sea_state", self.weather_weight_sea_state),
+            ("weather_weight_visibility", self.weather_weight_visibility),
+            ("weather_weight_wind", self.weather_weight_wind),
+        ):
+            if value < 0.0:
+                raise ValueError(f"{name} must be >= 0.")
+        weight_sum = (
+            self.weather_weight_sea_state
+            + self.weather_weight_visibility
+            + self.weather_weight_wind
+        )
+        if weight_sum <= 0.0:
+            raise ValueError("At least one weather hazard weight must be positive.")

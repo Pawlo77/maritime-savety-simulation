@@ -103,7 +103,7 @@ The system relies on three agent types:
 
 \subsection{Weather Field}
 
-A $50 \times 50$-cell grid evolves via Perlin noise~\cite{perlin1985}, producing spatially coherent, temporally drifting hazard patterns. Three physical channels — sea state, visibility, and wind intensity — are combined into a single normalised hazard scalar $W_{ij} \in [0,1]$, where $i$ and $j$ index the weather-grid cell:
+A $50 \times 50$-cell grid evolves with a Tier-2 stochastic process designed to produce realistic mesoscale structure: calm/storm regime switching, moving circular systems, coherent fronts, and bounded random shocks. The process is updated each macro tick and remains seed-deterministic for exact replay. Three physical channels --- sea state, visibility, and wind intensity --- are evolved jointly, then combined into a single normalised hazard scalar $W_{ij} \in [0,1]$, where $i$ and $j$ index the weather-grid cell:
 %
 \begin{equation}
   W_{ij} = w_s\,\text{sea\_state}_{ij}
@@ -112,9 +112,17 @@ A $50 \times 50$-cell grid evolves via Perlin noise~\cite{perlin1985}, producing
   \label{eq:W}
 \end{equation}
 %
-with weights $w_s = 0.4$, $w_v = 0.3$, $w_w = 0.3$ (sum to $1$). Each vessel observes weather $W$ only at its current position, enforcing the information asymmetry that the mesh network is designed to overcome.
+with non-negative weights $w_s$, $w_v$, and $w_w$ normalised at runtime. Each vessel observes weather $W$ only at its current position, enforcing the information asymmetry that the mesh network is designed to overcome.
 
-Motivation behind the weights is as follows: sea state is the most direct hazard to vessel stability; visibility affects collision risk and navigation accuracy; wind intensity impacts both stability and manoeuvrability. The linear combination allows for a single scalar hazard metric that can be easily integrated into the behavioural models while still capturing the multi-dimensional nature of maritime weather risk. Their precise values are chosen based on author domain knowledge and can be adjusted in sensitivity analyses without affecting the overall model structure.
+Channel dynamics are:
+\begin{itemize}[leftmargin=1.2em, itemsep=2pt]
+    \item \textbf{Regime switching:} weather alternates between \texttt{calm} and \texttt{storm} with configurable transition probabilities per tick.
+    \item \textbf{Circular system layer:} moving circular kernels are spawned with configurable radius, intensity, drift speed, and direction jitter; systems evolve via growth/decay and advection.
+    \item \textbf{Background + fronts:} each channel combines persistent advection-smoothed background dynamics with a low-frequency front field.
+    \item \textbf{Coupling + shocks:} cross-channel coupling enforces realistic co-variation (e.g., high wind with lower visibility), while rare bounded shocks provide controlled unpredictability.
+    \item \textbf{Spatial coherence constraints:} post-update smoothing and gradient limiting suppress implausible immediate transitions between near-calm and extreme cells.
+\end{itemize}
+The hazard weights preserve interpretability: sea state contributes direct stability risk, reduced visibility captures collision/navigation uncertainty, and wind captures manoeuvrability stress. All channel-process and hazard-weight parameters are exposed in the run GUI (basic presets plus advanced controls) and persisted in each run manifest for reproducibility.
 
 % ==================================================================
 \section{Decentralised Communication Protocol}
@@ -300,7 +308,7 @@ In addition, land collisions (groundings) are detected by testing vessel motion 
 \label{sec:experiment}
 % ==================================================================
 
-This section defines the experimental conditions, scenarios, KPIs, and statistical analysis methods used to test the hypotheses.
+This section defines the experimental conditions, scenarios, KPIs, and statistical analysis methods used to test the hypotheses. The weather engine is configured through a two-level GUI scheme: \emph{Basic} presets (\texttt{calm}, \texttt{mixed}, \texttt{stormy}) for fast setup and \emph{Advanced} controls exposing the full Tier-2 parameter set.
 
 \subsection{Methods Under Test}
 
@@ -316,7 +324,7 @@ An ablation matrix additionally disables each component in turn: mesh off ($\lam
 
 \subsection{Scenarios}
 
-Table~\ref{tab:scenarios} summarises the four scenarios. All share the same $100 \times 100$\,nm world; each is implemented as a factory function that configures the model constructor with no scenario-specific branching inside agent code. Every scenario runs 30 independent seeds.
+Table~\ref{tab:scenarios} summarises the four scenarios. All share the same $100 \times 100$\,nm world; each is implemented as a factory function that configures the model constructor with no scenario-specific branching inside agent code. Scenario defaults now include weather-regime and storm-system settings in addition to communication/noise stressors. Every scenario runs 30 independent seeds.
 
 \begin{table}[htbp]
     \caption{Scenario summary. $\sigma_\text{shore}$ is shore forecast standard deviation. All scenarios use 30 seeds.}
@@ -384,7 +392,7 @@ Table~\ref{tab:kpis} defines the six KPIs collected per run. KPIs~1--2 test H1, 
 
 \subsection{Statistical Analysis}
 
-Hypothesis decisions use the Mann-Whitney U test — appropriate for the bounded, non-normal KPI distributions produced by a finite-agent simulation. Effect sizes are reported as Cliff's $\Delta$~\cite{cliff1993}; both $p < 0.05$ and $\Delta > 0.2$ (small effect) are required for H1 and H3 to be confirmed. Confidence intervals are bootstrapped over the 30 seeds. The same seed sequence is applied to all conditions to eliminate seed-selection bias from pairwise comparisons.
+Hypothesis decisions use the Mann-Whitney U test --- appropriate for the bounded, non-normal KPI distributions produced by a finite-agent simulation. Effect sizes are reported as Cliff's $\Delta$~\cite{cliff1993}; both $p < 0.05$ and $\Delta > 0.2$ (small effect) are required for H1 and H3 to be confirmed. Confidence intervals are bootstrapped over the 30 seeds. The same seed sequence is applied to all conditions to eliminate seed-selection bias from pairwise comparisons. For each run, the full effective weather parameter set and seed are written to the manifest, enabling byte-level replay and sensitivity sweeps over the weather process.
 
 % ==================================================================
 \section{Results GUI}

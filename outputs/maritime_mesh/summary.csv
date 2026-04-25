@@ -1,2 +1,0 @@
-scenario,method,seed,fatal_per_1k_hrs,collision_per_1k_hrs,survival_ratio,avg_tta_hours,evac_activation_rate,mean_p_prep
-scenario_1_calm_passage,proposed,0,0.0,0.0,1.0,0.0,0.0,0.4440493469578377

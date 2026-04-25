@@ -32,6 +32,7 @@ class KpiLogger:
             for col in range(self._weather_probe_steps):
                 x_nm = weather_field.world_size_nm * (col / max(1, self._weather_probe_steps - 1))
                 y_nm = weather_field.world_size_nm * (row / max(1, self._weather_probe_steps - 1))
+                sea_state, visibility, wind_norm = weather_field.channels_at(x_nm, y_nm)
                 self.records.append(
                     {
                         "tick": tick,
@@ -40,6 +41,9 @@ class KpiLogger:
                         "x_nm": x_nm,
                         "y_nm": y_nm,
                         "hazard": weather_field.hazard_at(x_nm, y_nm),
+                        "sea_state": sea_state,
+                        "visibility": visibility,
+                        "wind_norm": wind_norm,
                         "world_size_nm": weather_field.world_size_nm,
                         "simulation_seed": simulation_seed,
                     }

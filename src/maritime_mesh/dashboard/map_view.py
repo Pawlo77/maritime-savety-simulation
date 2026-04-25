@@ -20,6 +20,7 @@ def make_timeline_map(
     show_communication_links: bool = False,
     show_event_markers: bool = True,
     collision_vessel_linger_ticks: int = 6,
+    weather_layer: str = "hazard",
 ) -> go.Figure:
     """Build animated map with weather probes, vessels, and rescue assets."""
     world_size_nm = map_world_size(run_df=run_df)
@@ -31,6 +32,15 @@ def make_timeline_map(
     event_df = run_df[run_df["entity_type"] == "intervention_event"]
     land_df = run_df[run_df["entity_type"] == "landmass"]
     link_df = run_df[run_df["entity_type"] == "communication_link"]
+    weather_layer_lookup = {
+        "Hazard": ("hazard", "Weather hazard", "YlOrRd"),
+        "Sea state": ("sea_state", "Sea state", "Blues"),
+        "Wind": ("wind_norm", "Wind intensity", "PuRd"),
+        "Low visibility": ("visibility", "Low visibility", "Greys"),
+    }
+    layer_key, layer_label, layer_scale = weather_layer_lookup.get(
+        weather_layer, ("hazard", "Weather hazard", "YlOrRd")
+    )
     if "event_kind" in event_df.columns:
         collision_events = event_df[event_df["event_kind"] == "collision"].copy()
         land_collision_events = event_df[event_df["event_kind"] == "land_collision"].copy()
@@ -104,6 +114,19 @@ def make_timeline_map(
     def _frame_for_tick(tick: int) -> go.Frame:
         """Build one animation frame for a single tick."""
         wx_tick = weather_df[weather_df["tick"] == tick]
+        if layer_key not in wx_tick.columns:
+            layer_values = wx_tick["hazard"]
+        elif layer_key == "visibility":
+            layer_values = 1.0 - wx_tick["visibility"]
+        else:
+            layer_values = wx_tick[layer_key]
+        wx_grid = wx_tick.assign(layer_value=layer_values).pivot_table(
+            index="y_nm",
+            columns="x_nm",
+            values="layer_value",
+            aggfunc="mean",
+        )
+        wx_grid = wx_grid.sort_index().sort_index(axis=1)
         vessel_tick = vessel_df[vessel_df["tick"] == tick]
         station_tick = station_df[station_df["tick"] == tick]
         rescue_tick = rescue_df[rescue_df["tick"] == tick]
@@ -138,20 +161,27 @@ def make_timeline_map(
             if not collisions_until_tick.empty
             else []
         )
+        rescue_hover_columns = ["entity_id", "asset_type", "mobilisation_ticks_remaining"]
+        rescue_tick_safe = rescue_tick.copy()
+        for column in rescue_hover_columns:
+            if column not in rescue_tick_safe.columns:
+                rescue_tick_safe[column] = ""
         return go.Frame(
             name=str(int(tick)),
             data=[
                 go.Heatmap(
-                    x=wx_tick["x_nm"],
-                    y=wx_tick["y_nm"],
-                    z=wx_tick["hazard"],
-                    colorscale="Turbo",
+                    x=list(wx_grid.columns),
+                    y=list(wx_grid.index),
+                    z=wx_grid.to_numpy(),
+                    colorscale=layer_scale,
                     zmin=0.0,
                     zmax=1.0,
-                    opacity=0.42,
-                    showscale=False,
+                    opacity=0.46,
+                    showscale=True,
+                    colorbar={"title": layer_label},
                     hovertemplate=(
-                        "Weather probe<br>x=%{x:.1f}, y=%{y:.1f}<br>hazard=%{z:.2f}<extra></extra>"
+                        f"{layer_label}<br>x=%{{x:.1f}}, y=%{{y:.1f}}"
+                        "<br>value=%{z:.2f}<extra></extra>"
                     ),
                 ),
                 go.Scatter(
@@ -214,11 +244,7 @@ def make_timeline_map(
                     mode="markers",
                     marker={"size": 12, "symbol": "x", "color": "#2ca02c"},
                     name="Rescue Assets",
-                    customdata=rescue_tick[
-                        ["entity_id", "asset_type", "mobilisation_ticks_remaining"]
-                    ]
-                    .fillna("")
-                    .to_numpy(),
+                    customdata=rescue_tick_safe[rescue_hover_columns].fillna("").to_numpy(),
                     hovertemplate=(
                         "Rescue %{customdata[0]}<br>"
                         "Asset type: %{customdata[1]}<br>"
