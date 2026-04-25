@@ -19,11 +19,11 @@ from maritime_mesh.constants import MACRO_TICK_HOURS, WORLD_SIZE_NM
 from maritime_mesh.enums import CrewArchetype, MethodCondition, RescueAssetType, VesselState
 from maritime_mesh.fusion.confidence import ConfidenceWeighter
 from maritime_mesh.fusion.shore_trust import ForecastFuser, ShoreTrustDecay
+from maritime_mesh.mesa_compat import Model, RandomActivation
 from maritime_mesh.model.kpi_logger import KpiLogger
 from maritime_mesh.weather.weather_field import WeatherField
 from maritime_mesh.world.collision_detector import CollisionDetector
 from maritime_mesh.world.lane import ShippingLane, Waypoint
-from maritime_mesh.mesa_compat import Model, RandomActivation
 
 
 class MaritimeModel(Model):
@@ -84,8 +84,16 @@ class MaritimeModel(Model):
             )
             if self.rng.random() < 0.1:
                 archetype = CrewArchetype.VETERAN
-            preparedness = PreparednessScorer(fixed_value=0.0) if self.config.method == MethodCondition.BASELINE_A else PreparednessScorer()
-            fuser = ForecastFuser(trust_decay=ShoreTrustDecay(decay_k=1e-9)) if self.config.method == MethodCondition.BASELINE_B else ForecastFuser()
+            preparedness = (
+                PreparednessScorer(fixed_value=0.0)
+                if self.config.method == MethodCondition.BASELINE_A
+                else PreparednessScorer()
+            )
+            fuser = (
+                ForecastFuser(trust_decay=ShoreTrustDecay(decay_k=1e-9))
+                if self.config.method == MethodCondition.BASELINE_B
+                else ForecastFuser()
+            )
             vessel = VesselAgent(
                 model=self,
                 unique_id=self._new_id(),
@@ -98,18 +106,24 @@ class MaritimeModel(Model):
                 forecast_fuser=fuser,
                 error_prob_model=ErrorProbabilityModel(enabled=self.config.human_factors_enabled),
                 preparedness_scorer=preparedness,
-                evacuation_policy=EvacuationPolicy(rng=self.rng, enabled=self.config.evacuation_enabled),
+                evacuation_policy=EvacuationPolicy(
+                    rng=self.rng, enabled=self.config.evacuation_enabled
+                ),
                 raft_model=RaftDeploymentModel(rng=self.rng),
                 survival_model=SurvivalModel(rng=self.rng),
-                position=(float(self.rng.uniform(0.0, WORLD_SIZE_NM)), float(self.rng.uniform(0.0, WORLD_SIZE_NM))),
+                position=(
+                    float(self.rng.uniform(0.0, WORLD_SIZE_NM)),
+                    float(self.rng.uniform(0.0, WORLD_SIZE_NM)),
+                ),
                 speed_kn=float(self.rng.uniform(10.0, 20.0)),
                 archetype=archetype,
             )
             self.vessels.append(vessel)
             self.scheduler.add(vessel)
 
-    def _relay_packets(self) -> None:
+    def _relay_packets(self) -> list[tuple[int, int]]:
         """Relay local weather packets and SOS messages among nearby vessels."""
+        relay_links: list[tuple[int, int]] = []
         active = [v for v in self.vessels if v.state in {VesselState.ACTIVE, VesselState.EVAC}]
         for sender in active:
             sender.mesh_relay.reset_tick()
@@ -125,16 +139,18 @@ class MaritimeModel(Model):
                     continue
                 if dist(sender.position, receiver.position) <= 15.0:
                     receiver.inbox.append(weather_packet)
+                    relay_links.append((sender.unique_id, receiver.unique_id))
             if sender.state == VesselState.EVAC:
-                sos = SosPacket(sender_id=sender.unique_id, position=sender.position, tick_sent=self.tick)
+                sos = SosPacket(
+                    sender_id=sender.unique_id, position=sender.position, tick_sent=self.tick
+                )
                 self.coastal_station.receive_sos(sos)
+        return relay_links
 
     def dispatch_rescue(self, packet: SosPacket) -> None:
         """Spawn rescue asset for SOS packet and add to scheduler."""
         asset = (
-            RescueAssetType.HELICOPTER
-            if self.rng.random() < 0.5
-            else RescueAssetType.PATROL_VESSEL
+            RescueAssetType.HELICOPTER if self.rng.random() < 0.5 else RescueAssetType.PATROL_VESSEL
         )
         rescue_agent = RescueAgent(
             model=self,
@@ -161,11 +177,19 @@ class MaritimeModel(Model):
         ):
             self.coastal_station.shore_radio.noise_std *= 2.0
 
-        self._relay_packets()
+        relay_links = self._relay_packets()
         self.scheduler.step()
         collisions = self.collision_detector.check_and_apply(self.vessels)
         self.kpi_logger.add_collisions(len(collisions))
-        self.kpi_logger.log_tick(self.tick, self.vessels)
+        self.kpi_logger.log_tick(
+            tick=self.tick,
+            vessels=self.vessels,
+            coastal_station=self.coastal_station,
+            rescue_agents=self.rescue_agents,
+            relay_links=relay_links,
+            collisions=collisions,
+            weather_field=self.weather_field,
+        )
         self.tick += 1
         self.utc_hours += MACRO_TICK_HOURS
 

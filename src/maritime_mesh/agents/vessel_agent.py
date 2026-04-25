@@ -85,6 +85,11 @@ class VesselAgent(AbstractMesaAgent):
         self.stability_threshold = 3
         self.n_survivors = 10
         self.has_evacuated = False
+        self.last_true_hazard = 0.0
+        self.last_mesh_observation_count = 0
+        self.last_shore_received = False
+        self.last_distance_to_shore = 0.0
+        self.last_error_probability = 0.0
 
     def _navigate_lane(self) -> None:
         """Move vessel toward lane waypoint by one macro-tick step."""
@@ -117,17 +122,29 @@ class VesselAgent(AbstractMesaAgent):
             return
 
         w_true = self.weather_field.hazard_at(*self.position)
+        self.last_true_hazard = w_true
         distance_to_shore = dist(self.position, SHORE_STATION_POSITION)
+        self.last_distance_to_shore = distance_to_shore
         if self.shore_radio.attempt_receive(distance_nm=distance_to_shore, local_hazard=w_true):
             self.w_hat_shore = self.shore_radio.broadcast(true_hazard=w_true)
             self.shore_age_ticks = 1
+            self.last_shore_received = True
         else:
             self.shore_age_ticks += 1
+            self.last_shore_received = False
 
         mesh_input = self._mesh_observations(current_tick=self.model.tick)
+        self.last_mesh_observation_count = len(mesh_input)
         w_hat_ship = self.confidence_weighter.fuse(mesh_input)
-        self.w_hat_blend = self.forecast_fuser.fuse(w_hat_ship, self.w_hat_shore, self.shore_age_ticks)
+        self.w_hat_blend = self.forecast_fuser.fuse(
+            w_hat_ship, self.w_hat_shore, self.shore_age_ticks
+        )
         self.forecast_error = abs(self.w_hat_blend - w_true)
+        self.last_error_probability = self.error_prob_model.compute(
+            hours_awake=self.hours_awake,
+            t_utc_hours=self.model.utc_hours,
+            archetype_modifier=self.archetype_modifier,
+        )
         self.p_prep = self.preparedness_scorer.score(self.forecast_error, self.archetype_modifier)
 
         if self.state == VesselState.ACTIVE:
