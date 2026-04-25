@@ -139,10 +139,12 @@ def test_run_from_gui_builds_runner_with_overrides(monkeypatch) -> None:
         shore_noise_std=0.2,
         shore_position=(5.0, 90.0),
         lane_text="lane_a:15,10;100,100",
+        max_workers=6,
     )
 
     assert not result.empty
     assert captured["n_seeds"] == 3
+    assert captured["max_workers"] == 6
     assert captured["simulation_overrides"]["world_size_nm"] == 180.0
     assert captured["scenario_overrides"]["n_vessels"] == 40
     assert captured["simulation_overrides"]["lane_definitions"][0][0] == "lane_a"

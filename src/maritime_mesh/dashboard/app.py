@@ -105,6 +105,7 @@ def _run_from_gui(
     shore_position: tuple[float, float],
     lane_text: str,
     shore_positions: tuple[tuple[float, float], ...] | None = None,
+    max_workers: int = 1,
 ) -> pd.DataFrame:
     """Backward-compatible run helper accepting raw lane text."""
     scenario_lookup = {
@@ -116,6 +117,7 @@ def _run_from_gui(
     scenario_factories = [scenario_lookup[name] for name in selected_scenario_names]
     runner = ExperimentRunner(
         n_seeds=n_seeds,
+        max_workers=max_workers,
         output_dir=output_dir,
         scenario_factories=scenario_factories,
         methods=selected_methods,

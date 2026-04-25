@@ -1,6 +1,7 @@
 """Experiment execution driver."""
 
 import json
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from dataclasses import replace
 from pathlib import Path
 
@@ -23,6 +24,8 @@ class ExperimentRunner:
         methods: list[MethodCondition] | None = None,
         simulation_overrides: dict | None = None,
         scenario_overrides: dict | None = None,
+        max_workers: int = 1,
+        parallel_backend: str = "process",
     ) -> None:
         """Initialize matrix dimensions and factories."""
         self.scenario_factories = scenario_factories or [
@@ -40,6 +43,10 @@ class ExperimentRunner:
         self.output_dir = output_dir or Path("outputs/maritime_mesh")
         self.simulation_overrides = simulation_overrides or {}
         self.scenario_overrides = scenario_overrides or {}
+        self.max_workers = max(1, int(max_workers))
+        if parallel_backend not in {"process", "thread"}:
+            raise ValueError("parallel_backend must be 'process' or 'thread'.")
+        self.parallel_backend = parallel_backend
 
     def _apply_overrides(self, config: SimulationConfig) -> SimulationConfig:
         """Apply GUI/runtime overrides to scenario and simulation configs."""
@@ -103,20 +110,45 @@ class ExperimentRunner:
 
     def run_all(self) -> pd.DataFrame:
         """Run all combinations and return KPI dataframe."""
-        rows = []
+        configs = []
         for scenario_factory in self.scenario_factories:
             for method in self.methods:
                 for seed in range(self.n_seeds):
-                    config = scenario_factory(method=method, seed=seed)
-                    kpis = self.run_single(config=config)
+                    configs.append(scenario_factory(method=method, seed=seed))
+
+        rows = []
+        if self.max_workers == 1 or len(configs) <= 1:
+            for config in configs:
+                kpis = self.run_single(config=config)
+                rows.append(
+                    {
+                        "scenario": config.scenario.name,
+                        "method": config.method.value,
+                        "seed": config.seed,
+                        **kpis,
+                    }
+                )
+        else:
+            executor_cls = (
+                ProcessPoolExecutor if self.parallel_backend == "process" else ThreadPoolExecutor
+            )
+            with executor_cls(max_workers=self.max_workers) as executor:
+                future_to_config = {
+                    executor.submit(self.run_single, config): config for config in configs
+                }
+                for future in as_completed(future_to_config):
+                    config = future_to_config[future]
+                    kpis = future.result()
                     rows.append(
                         {
                             "scenario": config.scenario.name,
-                            "method": method.value,
-                            "seed": seed,
+                            "method": config.method.value,
+                            "seed": config.seed,
                             **kpis,
                         }
                     )
+
+        rows.sort(key=lambda row: (row["scenario"], row["method"], row["seed"]))
         result = pd.DataFrame(rows)
         self.output_dir.mkdir(parents=True, exist_ok=True)
         result.to_csv(self.output_dir / "summary.csv", index=False)

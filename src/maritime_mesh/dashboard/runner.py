@@ -117,6 +117,7 @@ def run_from_gui(
     route_end_near_shore_nm: float = 60.0,
     route_end_offmap_margin_nm: float = 12.0,
     lane_endpoint_spawn_weights: tuple[tuple[str, tuple[float, float]], ...] = (),
+    max_workers: int = 1,
 ) -> pd.DataFrame:
     """Run experiment matrix from GUI controls."""
     land = WorldLand.default_for_world_size(world_size_nm, profile=land_profile)
@@ -178,6 +179,7 @@ def run_from_gui(
     max_spawn = world_size_nm if max_spawn_distance_nm is None else max_spawn_distance_nm
     runner = ExperimentRunner(
         n_seeds=n_seeds,
+        max_workers=max_workers,
         output_dir=output_dir,
         scenario_factories=scenario_factories,
         methods=selected_methods,

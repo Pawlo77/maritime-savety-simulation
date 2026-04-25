@@ -762,6 +762,17 @@ def render(output_dir: Path) -> None:
                 "Independent random trials per scenario-method pair. More seeds improve stability."
             ),
         )
+        max_workers = st.number_input(
+            "Max parallel workers",
+            min_value=1,
+            max_value=64,
+            value=4,
+            step=1,
+            help=(
+                "Maximum number of independent runs executed concurrently. "
+                "Increase to speed up large experiment matrices."
+            ),
+        )
         if int(n_seeds) < 30:
             st.info(
                 "Paper-aligned statistical runs use 30 seeds. "
@@ -1237,7 +1248,8 @@ def render(output_dir: Path) -> None:
         scenarios_label = ", ".join(selected_scenario_names) if selected_scenario_names else "-"
         methods_label = ", ".join(selected_method_values) if selected_method_values else "-"
         seeds_ticks_label = (
-            f"- Seeds: `{int(n_seeds)}` | Ticks/run: `{int(n_ticks)}` | "
+            f"- Seeds: `{int(n_seeds)}` | Max workers: `{int(max_workers)}` | "
+            f"Ticks/run: `{int(n_ticks)}` | "
             f"Vessels/run: `{int(n_vessels)}`"
         )
         world_label = (
@@ -1297,6 +1309,7 @@ def render(output_dir: Path) -> None:
                     selected_scenario_names=selected_scenario_names,
                     selected_methods=selected_methods,
                     n_seeds=int(n_seeds),
+                    max_workers=int(max_workers),
                     n_ticks=int(n_ticks),
                     n_vessels=int(n_vessels),
                     world_size_nm=float(world_size_nm),
