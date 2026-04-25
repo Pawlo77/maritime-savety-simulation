@@ -11,7 +11,7 @@ make test
 make gui
 
 # Run the full experiment suite
-uv run python -c "from maritime_mesh.experiment.runner import ExperimentRunner; ExperimentRunner(n_seeds=30, max_workers=6).run_all()"
+uv run python -c "from maritime_mesh.experiment.runner import ExperimentRunner; ExperimentRunner(n_seeds=30, max_workers=8, process_max_tasks_per_child=1).run_all()"
 ```
 
 ## First Successful Run Checklist
@@ -21,7 +21,7 @@ uv run python -c "from maritime_mesh.experiment.runner import ExperimentRunner; 
    - `make install`
    - `make test`
 2. Generate baseline experiment outputs:
-   - `uv run python -c "from maritime_mesh.experiment.runner import ExperimentRunner; ExperimentRunner(n_seeds=30, max_workers=6).run_all()"`
+   - `uv run python -c "from maritime_mesh.experiment.runner import ExperimentRunner; ExperimentRunner(n_seeds=30, max_workers=8, process_max_tasks_per_child=1).run_all()"`
 3. Confirm artifacts in your output directory (default: `outputs/maritime_mesh/`):
    - `summary.csv` (required for Results/Hypothesis pages)
    - `*.parquet` run logs (required for Map Playback)

@@ -31,6 +31,7 @@ def _render_kpi_cards(filtered: pd.DataFrame) -> None:
     if not available:
         return
     means = filtered[available].mean(numeric_only=True)
+    stds = filtered[available].std(numeric_only=True).fillna(0.0)
     cols = st.columns(min(3, len(available)))
     for index, kpi in enumerate(available):
         with cols[index % len(cols)]:
@@ -39,6 +40,7 @@ def _render_kpi_cards(filtered: pd.DataFrame) -> None:
                     "<div class='mm-card'>"
                     f"<div class='mm-card-label'>{kpi}</div>"
                     f"<div class='mm-card-value'>{means[kpi]:.4f}</div>"
+                    f"<div class='mm-muted'>std: {stds[kpi]:.4f}</div>"
                     f"<div class='mm-muted'>{KPI_DESCRIPTIONS.get(kpi, '')}</div>"
                     "</div>"
                 ),
@@ -289,7 +291,7 @@ def render(output_dir: Path) -> None:
             "Method Ranking and Uncertainty",
             "Significance vs Baseline",
             "Seed Outlier Drill-Down",
-            "Method Means Table",
+            "Method Mean/Std Table",
         ]
     )
 
@@ -328,23 +330,34 @@ def render(output_dir: Path) -> None:
                         marker={"color": "#35b8e7", "line": {"color": "#8fdfff", "width": 0.6}},
                         line={"color": "#6fd6ff", "width": 2},
                     )
-                    fig_box.update_layout(showlegend=False)
+                    fig_box.update_layout(
+                        showlegend=False,
+                        title=f"{kpi}: distribution by {'method' if scenario_mode == 'Single scenario' else 'scenario'}",  # noqa: E501
+                    )
                     apply_plotly_theme(fig_box, height=420)
                     st.plotly_chart(fig_box, width="stretch")
                 with col_b:
-                    means = filtered.groupby("method", as_index=False)[kpi].mean()
-                    means = means.sort_values(
-                        kpi, ascending=not KPI_HIGHER_IS_BETTER.get(kpi, True)
+                    stats = (
+                        filtered.groupby("method", as_index=False)[kpi]
+                        .agg(["mean", "std"])
+                        .reset_index()
+                        .rename(columns={"mean": "kpi_mean", "std": "kpi_std"})
+                    )
+                    stats["kpi_std"] = stats["kpi_std"].fillna(0.0)
+                    stats = stats.sort_values(
+                        "kpi_mean", ascending=not KPI_HIGHER_IS_BETTER.get(kpi, True)
                     )
                     fig_mean = px.bar(
-                        means,
+                        stats,
                         x="method",
-                        y=kpi,
+                        y="kpi_mean",
+                        error_y="kpi_std",
                         text_auto=".3f",
                         barmode="group",
+                        labels={"kpi_mean": f"{kpi} mean", "kpi_std": f"{kpi} std"},
                     )
                     fig_mean.update_traces(marker_color="#35b8e7")
-                    fig_mean.update_layout(showlegend=False)
+                    fig_mean.update_layout(showlegend=False, title=f"{kpi}: mean with std")
                     apply_plotly_theme(fig_mean, height=420)
                     st.plotly_chart(fig_mean, width="stretch")
             with tab_multi:
@@ -354,18 +367,26 @@ def render(output_dir: Path) -> None:
                     var_name="kpi",
                     value_name="value",
                 )
-                means_long = long_df.groupby(["kpi", "method"], as_index=False)["value"].mean()
+                stats_long = (
+                    long_df.groupby(["kpi", "method"], as_index=False)["value"]
+                    .agg(["mean", "std"])
+                    .reset_index()
+                    .rename(columns={"mean": "value_mean", "std": "value_std"})
+                )
+                stats_long["value_std"] = stats_long["value_std"].fillna(0.0)
                 fig_multi = px.bar(
-                    means_long,
+                    stats_long,
                     x="method",
-                    y="value",
+                    y="value_mean",
+                    error_y="value_std",
                     facet_col="kpi",
                     facet_col_wrap=2,
                     barmode="group",
                     text_auto=".3f",
+                    labels={"value_mean": "mean", "value_std": "std"},
                 )
                 fig_multi.update_traces(marker_color="#35b8e7")
-                fig_multi.update_layout(showlegend=False)
+                fig_multi.update_layout(showlegend=False, title="KPI means with std by method")
                 apply_plotly_theme(fig_multi, height=700)
                 st.plotly_chart(fig_multi, width="stretch")
 
@@ -442,10 +463,22 @@ def render(output_dir: Path) -> None:
 
     with tab_means:
         section_intro(
-            "Method Means Table",
-            "Compact scenario-method aggregation for reporting and export.",
+            "Method Mean/Std Table",
+            "Compact scenario-method aggregation (mean and std) for reporting and export.",
         )
-        means_table = filtered.groupby(["scenario", "method"], as_index=False)[
-            available_kpis
-        ].mean()
-        render_dataframe(means_table, width="stretch", hide_index=True)
+        stats_table = (
+            filtered.groupby(["scenario", "method"], as_index=False)[available_kpis]
+            .agg(["mean", "std"])
+            .reset_index()
+        )
+        stats_table.columns = [
+            (
+                f"{column[0]}_{column[1]}"
+                if isinstance(column, tuple) and column[1]
+                else column[0]
+                if isinstance(column, tuple)
+                else column
+            )
+            for column in stats_table.columns
+        ]
+        render_dataframe(stats_table, width="stretch", hide_index=True)

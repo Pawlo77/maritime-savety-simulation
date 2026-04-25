@@ -27,7 +27,7 @@ def test_flush_to_parquet_writes_file(default_simulation_config, tmp_path) -> No
     model.step()
     target = tmp_path / "log.parquet"
     model.kpi_logger.flush_to_parquet(str(target))
-    assert target.exists()
+    assert list(tmp_path.glob("log.parquet.part*.parquet"))
 
 
 def test_survival_ratio_uses_total_exposed_crew_denominator() -> None:

@@ -1,5 +1,6 @@
 """Experiment execution driver."""
 
+import gc
 import json
 import logging
 import os
@@ -33,6 +34,7 @@ class ExperimentRunner:
         scenario_overrides: dict | None = None,
         max_workers: int = 1,
         parallel_backend: str = "process",
+        process_max_tasks_per_child: int | None = 5,
     ) -> None:
         """Initialize matrix dimensions and factories."""
         configure_logging()
@@ -55,11 +57,20 @@ class ExperimentRunner:
         if parallel_backend not in {"process", "thread"}:
             raise ValueError("parallel_backend must be 'process' or 'thread'.")
         self.parallel_backend = parallel_backend
+        if process_max_tasks_per_child is not None and int(process_max_tasks_per_child) < 1:
+            raise ValueError("process_max_tasks_per_child must be >= 1 or None.")
+        self.process_max_tasks_per_child = (
+            int(process_max_tasks_per_child) if process_max_tasks_per_child is not None else None
+        )
         LOGGER.info(
-            "ExperimentRunner initialized (seeds=%s, workers=%s, backend=%s, output_dir=%s)",
+            (
+                "ExperimentRunner initialized "
+                "(seeds=%s, workers=%s, backend=%s, max_tasks_per_child=%s, output_dir=%s)"
+            ),
             self.n_seeds,
             self.max_workers,
             self.parallel_backend,
+            self.process_max_tasks_per_child,
             self.output_dir,
         )
 
@@ -95,6 +106,12 @@ class ExperimentRunner:
             effective_config.n_ticks,
         )
         model = MaritimeModel(effective_config)
+        parquet_path = self.output_dir / (
+            f"{effective_config.scenario.name}_{effective_config.method.value}_"
+            f"{effective_config.seed}.parquet"
+        )
+        parquet_path.unlink(missing_ok=True)
+        model.kpi_logger.configure_output(parquet_path, clear_existing_chunks=True)
         if show_run_progress:
             # Reserve progress row 0 for the global bar in the parent process.
             run_position = 1 + (os.getpid() % max(1, int(progress_slots)))
@@ -114,11 +131,12 @@ class ExperimentRunner:
         else:
             kpis = model.run()
         self._write_run_manifest(effective_config)
-        parquet_path = self.output_dir / (
-            f"{effective_config.scenario.name}_{effective_config.method.value}_"
-            f"{effective_config.seed}.parquet"
-        )
         model.kpi_logger.flush_to_parquet(str(parquet_path))
+        # Explicitly release heavy run buffers in workers to reduce RSS creep.
+        model.kpi_logger.records.clear()
+        model.kpi_logger.event_records.clear()
+        del model
+        gc.collect()
         LOGGER.info(
             "Run finished: scenario=%s method=%s seed=%s parquet=%s",
             effective_config.scenario.name,
@@ -200,22 +218,28 @@ class ExperimentRunner:
                 ProcessPoolExecutor if self.parallel_backend == "process" else ThreadPoolExecutor
             )
             show_child_progress = self.parallel_backend == "process"
-            with executor_cls(max_workers=self.max_workers) as executor:
+            executor_kwargs: dict[str, object] = {"max_workers": self.max_workers}
+            if self.parallel_backend == "process":
+                executor_kwargs["max_tasks_per_child"] = self.process_max_tasks_per_child
+            with executor_cls(**executor_kwargs) as executor:
                 run_kwargs = {}
                 if supports_show_run_progress:
                     run_kwargs["show_run_progress"] = show_child_progress
                 if supports_progress_slots:
                     run_kwargs["progress_slots"] = self.max_workers
-                future_to_config = {
-                    executor.submit(
-                        self.run_single,
-                        config,
-                        **run_kwargs,
-                    ): config
-                    for config in configs
-                }
+                configs_iter = iter(configs)
+                future_to_config: dict = {}
+                max_in_flight = max(1, self.max_workers * 2)
+                for _ in range(min(max_in_flight, len(configs))):
+                    config = next(configs_iter, None)
+                    if config is None:
+                        break
+                    future = executor.submit(self.run_single, config, **run_kwargs)
+                    future_to_config[future] = config
                 with tqdm(total=len(configs), desc="all runs", dynamic_ncols=True) as all_bar:
-                    for future in as_completed(future_to_config):
+                    while future_to_config:
+                        for future in as_completed(tuple(future_to_config.keys())):  # noqa: B007
+                            break
                         config = future_to_config[future]
                         kpis = future.result()
                         rows.append(
@@ -227,6 +251,13 @@ class ExperimentRunner:
                             }
                         )
                         all_bar.update(1)
+                        del future_to_config[future]
+                        next_config = next(configs_iter, None)
+                        if next_config is not None:
+                            next_future = executor.submit(
+                                self.run_single, next_config, **run_kwargs
+                            )
+                            future_to_config[next_future] = next_config
 
         rows.sort(key=lambda row: (row["scenario"], row["method"], row["seed"]))
         result = pd.DataFrame(rows)

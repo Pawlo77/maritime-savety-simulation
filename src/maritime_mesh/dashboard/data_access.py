@@ -56,8 +56,8 @@ def _validate_run_log(run_df: pd.DataFrame, run_name: str) -> pd.DataFrame:
 
 
 if st is not None:
-    _cached_read_csv = st.cache_data(show_spinner=False)(pd.read_csv)
-    _cached_read_parquet = st.cache_data(show_spinner=False)(pd.read_parquet)
+    _cached_read_csv = st.cache_data(show_spinner=False, max_entries=8)(pd.read_csv)
+    _cached_read_parquet = st.cache_data(show_spinner=False, max_entries=8)(pd.read_parquet)
 else:
     _cached_read_csv = pd.read_csv
     _cached_read_parquet = pd.read_parquet
@@ -75,12 +75,18 @@ def load_run_log(output_dir: Path, scenario: str, method: str, seed: int) -> pd.
     """Load one per-run parquet tick log."""
     run_name = f"{scenario}_{method}_{seed}"
     run_path = output_dir / f"{run_name}.parquet"
+    chunk_paths = sorted(output_dir.glob(f"{run_name}.parquet.part*.parquet"))
     manifest_path = output_dir / f"{run_name}.manifest.json"
     if manifest_path.exists():
         _read_manifest(manifest_path)
-    if not run_path.exists():
+    if run_path.exists():
+        return _validate_run_log(_cached_read_parquet(run_path), run_name=run_name)
+    if chunk_paths:
+        frames = [_cached_read_parquet(path) for path in chunk_paths]
+        return _validate_run_log(pd.concat(frames, ignore_index=True), run_name=run_name)
+    if not run_path.exists() and not chunk_paths:
         return pd.DataFrame()
-    return _validate_run_log(_cached_read_parquet(run_path), run_name=run_name)
+    return pd.DataFrame()
 
 
 def map_world_size(run_df: pd.DataFrame) -> float:

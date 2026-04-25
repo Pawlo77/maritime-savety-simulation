@@ -29,8 +29,14 @@ def _render_home_kpis(summary: pd.DataFrame) -> None:
     mean_survival = (
         float(summary["survival_ratio"].mean()) if "survival_ratio" in summary else float("nan")
     )
+    std_survival = (
+        float(summary["survival_ratio"].std()) if "survival_ratio" in summary else float("nan")
+    )
     mean_fatal = (
         float(summary["fatal_per_1k_hrs"].mean()) if "fatal_per_1k_hrs" in summary else float("nan")
+    )
+    std_fatal = (
+        float(summary["fatal_per_1k_hrs"].std()) if "fatal_per_1k_hrs" in summary else float("nan")
     )
     best_method = "-"
     if "survival_ratio" in summary:
@@ -45,8 +51,20 @@ def _render_home_kpis(summary: pd.DataFrame) -> None:
     cols[0].metric("Scenarios", scenarios)
     cols[1].metric("Methods", methods)
     cols[2].metric("Runs", runs)
-    cols[3].metric("Avg Survival", f"{mean_survival:.3f}" if pd.notna(mean_survival) else "N/A")
-    cols[4].metric("Avg Fatal /1k hrs", f"{mean_fatal:.3f}" if pd.notna(mean_fatal) else "N/A")
+    cols[3].metric(
+        "Survival (mean±std)",
+        (
+            f"{mean_survival:.3f} ± {std_survival:.3f}"
+            if pd.notna(mean_survival) and pd.notna(std_survival)
+            else "N/A"
+        ),
+    )
+    cols[4].metric(
+        "Fatal /1k hrs (mean±std)",
+        f"{mean_fatal:.3f} ± {std_fatal:.3f}"
+        if pd.notna(mean_fatal) and pd.notna(std_fatal)
+        else "N/A",
+    )
     st.markdown(
         f"<span class='mm-badge mm-badge-success'>Top method: {best_method}</span>",
         unsafe_allow_html=True,
@@ -62,16 +80,19 @@ def _render_home_charts(summary: pd.DataFrame) -> None:
         if "survival_ratio" in summary:
             method_survival = (
                 summary.groupby("method", as_index=False)["survival_ratio"]
-                .mean()
-                .sort_values("survival_ratio", ascending=False)
+                .agg(["mean", "std"])
+                .reset_index()
+                .rename(columns={"mean": "survival_mean", "std": "survival_std"})
+                .sort_values("survival_mean", ascending=False)
             )
             method_survival["method_label"] = method_survival["method"].map(display_method_name)
             fig = px.bar(
                 method_survival,
                 x="method_label",
-                y="survival_ratio",
+                y="survival_mean",
+                error_y="survival_std",
                 text_auto=".3f",
-                labels={"method_label": "Method", "survival_ratio": "Mean survival ratio"},
+                labels={"method_label": "Method", "survival_mean": "Mean survival ratio"},
             )
             fig.update_traces(marker_color="#35b8e7")
             fig.update_layout(showlegend=False, title="Method Performance Snapshot")
@@ -81,18 +102,21 @@ def _render_home_charts(summary: pd.DataFrame) -> None:
         if "fatal_per_1k_hrs" in summary:
             by_scenario = (
                 summary.groupby("scenario", as_index=False)["fatal_per_1k_hrs"]
-                .mean()
-                .sort_values("fatal_per_1k_hrs", ascending=True)
+                .agg(["mean", "std"])
+                .reset_index()
+                .rename(columns={"mean": "fatal_mean", "std": "fatal_std"})
+                .sort_values("fatal_mean", ascending=True)
             )
             by_scenario["scenario_label"] = by_scenario["scenario"].map(display_scenario_name)
             fig = px.bar(
                 by_scenario,
                 x="scenario_label",
-                y="fatal_per_1k_hrs",
+                y="fatal_mean",
+                error_y="fatal_std",
                 text_auto=".3f",
                 labels={
                     "scenario_label": "Scenario",
-                    "fatal_per_1k_hrs": "Mean fatalities per 1k hrs",
+                    "fatal_mean": "Mean fatalities per 1k hrs",
                 },
             )
             fig.update_traces(marker_color="#35b8e7")

@@ -5,7 +5,7 @@ import logging
 DEFAULT_LOG_FORMAT = "%(asctime)s | %(levelname)s | %(processName)s | %(name)s | %(message)s"
 
 
-def configure_logging(level: int = logging.INFO, force: bool = False) -> None:
+def configure_logging(level: int = logging.ERROR, force: bool = False) -> None:
     """Configure root logger with project defaults.
 
     If handlers already exist, keep them but still enforce the effective level.

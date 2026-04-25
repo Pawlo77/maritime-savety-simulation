@@ -10,13 +10,67 @@ from maritime_mesh.constants import MACRO_TICK_HOURS
 class KpiLogger:
     """Collect tick records and compute run-level KPIs."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        output_path: str | Path | None = None,
+        flush_every_ticks: int | None = None,
+    ) -> None:
         """Initialize record store."""
         self.records: list[dict] = []
         self.event_records: list[dict] = []
         self._collisions = 0
         self._weather_probe_steps = 12
         self._rescue_tta_hours: list[float] = []
+        self._output_path = Path(output_path) if output_path is not None else None
+        default_flush_ticks = max(1, round(24.0 / max(1e-9, MACRO_TICK_HOURS)))
+        self._flush_every_ticks = (
+            int(flush_every_ticks) if flush_every_ticks is not None else default_flush_ticks
+        )
+        self._chunk_index = 0
+        self._first_survivors_by_vessel: dict[int, float] = {}
+        self._last_survivors_by_vessel: dict[int, float] = {}
+        self._evac_by_vessel: dict[int, bool] = {}
+        self._p_prep_sum = 0.0
+        self._p_prep_count = 0
+        self._last_tick_seen = -1
+
+    def _run_chunk_path(self, chunk_index: int) -> Path:
+        """Return deterministic file path for one flushed chunk."""
+        if self._output_path is None:
+            raise ValueError("output_path is not configured.")
+        return self._output_path.with_name(
+            f"{self._output_path.name}.part{chunk_index:05d}.parquet"
+        )
+
+    def configure_output(
+        self, output_path: str | Path, *, clear_existing_chunks: bool = True
+    ) -> None:
+        """Attach logger to output location and optionally reset prior chunk files."""
+        new_output_path = Path(output_path)
+        output_changed = self._output_path != new_output_path
+        self._output_path = new_output_path
+        if output_changed:
+            self._chunk_index = 0
+        if clear_existing_chunks:
+            self._chunk_index = 0
+            for old_chunk in self._output_path.parent.glob(
+                f"{self._output_path.name}.part*.parquet"
+            ):
+                old_chunk.unlink(missing_ok=True)
+
+    def _update_kpi_accumulators(self, vessel) -> None:
+        """Track KPI aggregates incrementally so full-record retention is unnecessary."""
+        vessel_id = int(vessel.unique_id)
+        survivors = float(vessel.n_survivors)
+        self._last_survivors_by_vessel[vessel_id] = survivors
+        if vessel_id not in self._first_survivors_by_vessel:
+            self._first_survivors_by_vessel[vessel_id] = survivors
+        self._evac_by_vessel[vessel_id] = self._evac_by_vessel.get(vessel_id, False) or bool(
+            vessel.has_evacuated
+        )
+        self._p_prep_sum += float(vessel.p_prep)
+        self._p_prep_count += 1
 
     def add_collisions(self, count: int) -> None:
         """Track collisions detected in current tick."""
@@ -68,6 +122,7 @@ class KpiLogger:
             tick=tick, weather_field=weather_field, simulation_seed=simulation_seed
         )
         for vessel in vessels:
+            self._update_kpi_accumulators(vessel)
             self.records.append(
                 {
                     "tick": tick,
@@ -185,11 +240,54 @@ class KpiLogger:
             elif hasattr(land, "points"):
                 serialized = ";".join(f"{point[0]},{point[1]}" for point in land.points)
                 record.update({"geometry_type": "polygon", "points_nm": serialized})
-            self.records.append(record)
+            if tick == 0:
+                self.records.append(record)
+        self._last_tick_seen = max(self._last_tick_seen, int(tick))
+        if self._output_path is not None and (tick + 1) % self._flush_every_ticks == 0:
+            self._flush_chunk()
+
+    def _flush_chunk(self) -> None:
+        """Persist currently buffered records as one parquet chunk."""
+        if self._output_path is None:
+            return
+        if not self.records and not self.event_records:
+            return
+        output_path = self._run_chunk_path(self._chunk_index)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        frame = pd.DataFrame([*self.records, *self.event_records])
+        for column in ("entity_id", "source_id", "target_id"):
+            if column in frame.columns:
+                frame[column] = frame[column].astype("string")
+        frame.to_parquet(output_path, index=False)
+        self.records.clear()
+        self.event_records.clear()
+        self._chunk_index += 1
 
     def compute_kpis(self) -> dict[str, float]:
         """Aggregate records into experiment KPI set."""
-        if not self.records:
+        if self.records and not self._last_survivors_by_vessel:
+            vessel_rows = [row for row in self.records if row.get("entity_type") == "vessel"]
+            vessel_rows.sort(
+                key=lambda row: (int(row.get("vessel_id", -1)), int(row.get("tick", -1)))
+            )
+            self._last_tick_seen = max(
+                self._last_tick_seen,
+                max(
+                    (int(row.get("tick", -1)) for row in vessel_rows), default=self._last_tick_seen
+                ),
+            )
+            for row in vessel_rows:
+                vessel_id = int(row["vessel_id"])
+                survivors = float(row.get("n_survivors", 0.0))
+                self._last_survivors_by_vessel[vessel_id] = survivors
+                if vessel_id not in self._first_survivors_by_vessel:
+                    self._first_survivors_by_vessel[vessel_id] = survivors
+                self._evac_by_vessel[vessel_id] = self._evac_by_vessel.get(
+                    vessel_id, False
+                ) or bool(row.get("has_evacuated", False))
+                self._p_prep_sum += float(row.get("p_prep", 0.0))
+                self._p_prep_count += 1
+        if not self._last_survivors_by_vessel:
             return {
                 "fatal_per_1k_hrs": 0.0,
                 "collision_per_1k_hrs": 0.0,
@@ -198,25 +296,10 @@ class KpiLogger:
                 "evac_activation_rate": 0.0,
                 "mean_p_prep": 0.0,
             }
-        df = pd.DataFrame(self.records)
-        vessel_df = df[df["entity_type"] == "vessel"].copy()
-        unique_vessels = vessel_df["vessel_id"].nunique()
-        total_hours = max(1e-9, unique_vessels * (df["tick"].max() + 1) * MACRO_TICK_HOURS)
-        final_states = (
-            vessel_df.sort_values("tick")
-            .groupby("vessel_id", as_index=False)
-            .tail(1)
-            .set_index("vessel_id")
-        )
-        initial_survivors = (
-            vessel_df.sort_values("tick")
-            .groupby("vessel_id", as_index=False)
-            .head(1)
-            .set_index("vessel_id")["n_survivors"]
-        )
-        final_survivors = final_states["n_survivors"].astype(float)
-        total_exposed_crew = float(initial_survivors.sum())
-        survivors = float(final_survivors.sum())
+        unique_vessels = len(self._last_survivors_by_vessel)
+        total_hours = max(1e-9, unique_vessels * (self._last_tick_seen + 1) * MACRO_TICK_HOURS)
+        total_exposed_crew = float(sum(self._first_survivors_by_vessel.values()))
+        survivors = float(sum(self._last_survivors_by_vessel.values()))
         fatalities = max(0.0, total_exposed_crew - survivors)
         return {
             "fatal_per_1k_hrs": (fatalities / total_hours) * 1000.0,
@@ -225,18 +308,14 @@ class KpiLogger:
             "avg_tta_hours": float(pd.Series(self._rescue_tta_hours).mean())
             if self._rescue_tta_hours
             else 0.0,
-            "evac_activation_rate": float(
-                vessel_df.groupby("vessel_id")["has_evacuated"].max().mean()
-            ),
-            "mean_p_prep": float(vessel_df["p_prep"].mean()),
+            "evac_activation_rate": float(pd.Series(list(self._evac_by_vessel.values())).mean())
+            if self._evac_by_vessel
+            else 0.0,
+            "mean_p_prep": self._p_prep_sum / max(1, self._p_prep_count),
         }
 
     def flush_to_parquet(self, path: str) -> None:
         """Write tick-level records to parquet path."""
-        output_path = Path(path)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        frame = pd.DataFrame([*self.records, *self.event_records])
-        for column in ("entity_id", "source_id", "target_id"):
-            if column in frame.columns:
-                frame[column] = frame[column].astype("string")
-        frame.to_parquet(output_path, index=False)
+        if self._output_path is None or self._output_path != Path(path):
+            self.configure_output(path, clear_existing_chunks=False)
+        self._flush_chunk()
