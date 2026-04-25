@@ -1,8 +1,11 @@
+"""Unit tests for vessel lifecycle and communication state updates."""
+
 from maritime_mesh.enums import VesselState
 from maritime_mesh.model.maritime_model import MaritimeModel
 
 
 def test_inbox_cleared_each_tick(default_simulation_config) -> None:
+    """Verify vessel step clears transient packet inbox."""
     model = MaritimeModel(default_simulation_config)
     vessel = model.vessels[0]
     vessel.inbox.append(vessel.inbox[0] if vessel.inbox else None)
@@ -12,10 +15,12 @@ def test_inbox_cleared_each_tick(default_simulation_config) -> None:
 
 
 def test_shore_age_ticks_increments_when_no_reception(default_simulation_config) -> None:
+    """Verify shore age counter increments when reception fails."""
     model = MaritimeModel(default_simulation_config)
     vessel = model.vessels[0]
 
     def _never_receive(distance_nm: float, local_hazard: float) -> bool:
+        """Force shore receive attempts to fail for this test."""
         _ = distance_nm, local_hazard
         return False
 
@@ -26,13 +31,16 @@ def test_shore_age_ticks_increments_when_no_reception(default_simulation_config)
 
 
 def test_state_transition_to_evac_possible(default_simulation_config) -> None:
+    """Verify vessel can transition from ACTIVE into evacuation flow."""
     model = MaritimeModel(default_simulation_config)
     vessel = model.vessels[0]
 
     def _always_evacuate(**_kwargs: object) -> bool:
+        """Force evacuation policy to trigger."""
         return True
 
     def _always_deploy(**_kwargs: object) -> bool:
+        """Force raft deployment to succeed."""
         return True
 
     vessel.evacuation_policy.should_evacuate = _always_evacuate

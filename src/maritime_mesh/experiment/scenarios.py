@@ -57,6 +57,8 @@ def scenario_3_blind_shore(method: MethodCondition, seed: int) -> SimulationConf
         shore_noise_std=0.18,
         green_crew_fraction=0.3,
         noise_double_tick=40,
+        min_spawn_distance_nm=40.0,
+        max_spawn_distance_nm=70.0,
         hypothesis_tags=("H3",),
     )
     return _make_config(scenario=scenario, method=method, seed=seed)

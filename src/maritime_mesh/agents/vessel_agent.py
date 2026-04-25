@@ -86,6 +86,7 @@ class VesselAgent(AbstractMesaAgent):
         self.stability_threshold = 3
         self.n_survivors = 10
         self.has_evacuated = False
+        self.sos_sent = False
         self.last_true_hazard = 0.0
         self.last_mesh_observation_count = 0
         self.last_shore_received = False

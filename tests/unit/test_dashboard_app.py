@@ -89,6 +89,20 @@ def test_map_world_size_fallback_uses_xy_extent() -> None:
     assert dashboard_app._map_world_size(frame) == WORLD_SIZE_NM
 
 
+def test_map_world_size_without_position_columns_returns_default() -> None:
+    """World size helper should not crash when x/y columns are absent."""
+    frame = pd.DataFrame({"tick": [0, 1], "entity_type": ["vessel", "vessel"]})
+    assert dashboard_app._map_world_size(frame) == WORLD_SIZE_NM
+
+
+def test_can_render_map_requires_minimum_columns() -> None:
+    """Map rendering guard should detect missing geometry columns."""
+    complete = pd.DataFrame({"tick": [0], "entity_type": ["vessel"], "x_nm": [1.0], "y_nm": [2.0]})
+    incomplete = pd.DataFrame({"tick": [0], "entity_type": ["vessel"]})
+    assert dashboard_app._can_render_map(complete) is True
+    assert dashboard_app._can_render_map(incomplete) is False
+
+
 def test_make_timeline_map_has_frames_and_dynamic_range() -> None:
     """Timeline map should include one frame per tick and dynamic axis range."""
     figure = dashboard_app._make_timeline_map(_sample_run_df())
@@ -105,9 +119,11 @@ def test_run_from_gui_builds_runner_with_overrides(monkeypatch) -> None:
         """Dummy runner used to capture constructor arguments."""
 
         def __init__(self, **kwargs) -> None:
+            """Capture constructor keyword arguments for assertions."""
             captured.update(kwargs)
 
         def run_all(self) -> pd.DataFrame:
+            """Return minimal dataframe expected by calling test."""
             return pd.DataFrame({"scenario": ["scenario_1_calm_passage"], "method": ["proposed"]})
 
     monkeypatch.setattr(dashboard_app, "ExperimentRunner", DummyRunner)

@@ -1,9 +1,12 @@
+"""Integration tests for end-to-end reproducibility guarantees."""
+
 from maritime_mesh.enums import MethodCondition
 from maritime_mesh.experiment.scenarios import scenario_2_storm_corridor
 from maritime_mesh.model.maritime_model import MaritimeModel
 
 
 def test_same_seed_reproduces_identical_kpis() -> None:
+    """Ensure equal seeds produce equal KPI outputs after rounding."""
     config_a = scenario_2_storm_corridor(method=MethodCondition.PROPOSED, seed=11)
     config_b = scenario_2_storm_corridor(method=MethodCondition.PROPOSED, seed=11)
     result_a = MaritimeModel(config_a).run()

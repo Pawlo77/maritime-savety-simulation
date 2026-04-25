@@ -287,7 +287,7 @@ Behavior of this model was motivated by the need to capture the critical importa
 
 \subsection{Collision Detection}
 
-Collisions are detected using Shapely circle intersection at a collision
+Collisions are detected using pairwise circle-overlap checks at a collision
 radius of $r = 0.15$\,nm, consistent with near-miss studies on vessel
 encounter geometry~\cite{zhang2015}.
 Each intersection increments both vessels' damage counters; damage above

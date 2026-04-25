@@ -16,12 +16,17 @@ class KpiLogger:
         self.records: list[dict] = []
         self._collisions = 0
         self._weather_probe_steps = 12
+        self._rescue_tta_hours: list[float] = []
 
     def add_collisions(self, count: int) -> None:
         """Track collisions detected in current tick."""
         self._collisions += count
 
-    def _append_weather_probes(self, tick: int, weather_field) -> None:
+    def add_rescue_tta(self, tta_hours: float) -> None:
+        """Track rescue time-to-arrival for KPI aggregation."""
+        self._rescue_tta_hours.append(float(max(0.0, tta_hours)))
+
+    def _append_weather_probes(self, tick: int, weather_field, simulation_seed: int) -> None:
         """Append coarse grid weather probes for map heat overlay."""
         for row in range(self._weather_probe_steps):
             for col in range(self._weather_probe_steps):
@@ -36,6 +41,7 @@ class KpiLogger:
                         "y_nm": y_nm,
                         "hazard": weather_field.hazard_at(x_nm, y_nm),
                         "world_size_nm": weather_field.world_size_nm,
+                        "simulation_seed": simulation_seed,
                     }
                 )
 
@@ -49,9 +55,12 @@ class KpiLogger:
         collisions: list[tuple[int, int]],
         weather_field,
         world_size_nm: float,
+        simulation_seed: int,
     ) -> None:
         """Append entities and events for one tick."""
-        self._append_weather_probes(tick=tick, weather_field=weather_field)
+        self._append_weather_probes(
+            tick=tick, weather_field=weather_field, simulation_seed=simulation_seed
+        )
         for vessel in vessels:
             self.records.append(
                 {
@@ -76,6 +85,7 @@ class KpiLogger:
                     "mesh_observations": vessel.last_mesh_observation_count,
                     "error_probability": vessel.last_error_probability,
                     "world_size_nm": world_size_nm,
+                    "simulation_seed": simulation_seed,
                 }
             )
         self.records.append(
@@ -89,6 +99,7 @@ class KpiLogger:
                 "shore_broadcast": coastal_station.last_broadcast,
                 "queued_sos": len(coastal_station.sos_queue),
                 "world_size_nm": world_size_nm,
+                "simulation_seed": simulation_seed,
             }
         )
         for rescue in rescue_agents:
@@ -104,6 +115,7 @@ class KpiLogger:
                     "target_x_nm": rescue.target_position[0],
                     "target_y_nm": rescue.target_position[1],
                     "world_size_nm": world_size_nm,
+                    "simulation_seed": simulation_seed,
                 }
             )
         for source_id, target_id in relay_links:
@@ -115,6 +127,7 @@ class KpiLogger:
                     "source_id": source_id,
                     "target_id": target_id,
                     "world_size_nm": world_size_nm,
+                    "simulation_seed": simulation_seed,
                 }
             )
         for vessel_a, vessel_b in collisions:
@@ -127,6 +140,7 @@ class KpiLogger:
                     "source_id": vessel_a,
                     "target_id": vessel_b,
                     "world_size_nm": world_size_nm,
+                    "simulation_seed": simulation_seed,
                 }
             )
 
@@ -157,7 +171,9 @@ class KpiLogger:
             "fatal_per_1k_hrs": (fatalities / total_hours) * 1000.0,
             "collision_per_1k_hrs": (self._collisions / total_hours) * 1000.0,
             "survival_ratio": survivors / max(1.0, survivors + fatalities),
-            "avg_tta_hours": 0.0,
+            "avg_tta_hours": float(pd.Series(self._rescue_tta_hours).mean())
+            if self._rescue_tta_hours
+            else 0.0,
             "evac_activation_rate": float(
                 vessel_df.groupby("vessel_id")["has_evacuated"].max().mean()
             ),

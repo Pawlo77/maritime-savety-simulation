@@ -61,16 +61,16 @@ class StatisticalAnalyser:
         comparisons = [
             (
                 "scenario_2_storm_corridor",
-                "collision_per_1k_hrs",
+                "fatal_per_1k_hrs",
                 MethodCondition.PROPOSED,
-                MethodCondition.BASELINE_B,
+                MethodCondition.BASELINE_A,
                 "H1",
             ),
             (
                 "scenario_4_deep_water_rescue",
                 "survival_ratio",
                 MethodCondition.PROPOSED,
-                MethodCondition.BASELINE_B,
+                MethodCondition.BASELINE_A,
                 "H2",
             ),
             (

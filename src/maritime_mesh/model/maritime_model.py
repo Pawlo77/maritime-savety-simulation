@@ -15,7 +15,7 @@ from maritime_mesh.communication.mesh_relay import MeshRelayProtocol
 from maritime_mesh.communication.packet import MeshPacket, SosPacket
 from maritime_mesh.communication.shore_radio import ShoreRadioModel
 from maritime_mesh.config import SimulationConfig
-from maritime_mesh.constants import MACRO_TICK_HOURS
+from maritime_mesh.constants import MACRO_TICK_HOURS, VESSEL_RADIO_RANGE_NM
 from maritime_mesh.enums import CrewArchetype, MethodCondition, RescueAssetType, VesselState
 from maritime_mesh.fusion.confidence import ConfidenceWeighter
 from maritime_mesh.fusion.shore_trust import ForecastFuser, ShoreTrustDecay
@@ -45,6 +45,8 @@ class MaritimeModel(Model):
         self.tick = 0
         self.utc_hours = 0.0
         self._next_id = 1
+        self._sos_dispatch_tick_by_vessel: dict[int, int] = {}
+        self._recorded_rescue_vessels: set[int] = set()
         self._lanes = self._build_lanes()
         self._spawn_agents()
 
@@ -137,10 +139,7 @@ class MaritimeModel(Model):
                 ),
                 raft_model=RaftDeploymentModel(rng=self.rng),
                 survival_model=SurvivalModel(rng=self.rng),
-                position=(
-                    float(self.rng.uniform(0.0, self.world_size_nm)),
-                    float(self.rng.uniform(0.0, self.world_size_nm)),
-                ),
+                position=self._sample_spawn_position(),
                 speed_kn=float(self.rng.uniform(10.0, 20.0)),
                 archetype=archetype,
                 shore_station_position=self.shore_station_position,
@@ -148,10 +147,39 @@ class MaritimeModel(Model):
             self.vessels.append(vessel)
             self.scheduler.add(vessel)
 
+    def _sample_spawn_position(self) -> tuple[float, float]:
+        """Draw vessel spawn position satisfying scenario shore-distance constraints."""
+        min_distance = max(0.0, self.config.scenario.min_spawn_distance_nm)
+        max_distance = max(min_distance, self.config.scenario.max_spawn_distance_nm)
+        for _ in range(200):
+            candidate = (
+                float(self.rng.uniform(0.0, self.world_size_nm)),
+                float(self.rng.uniform(0.0, self.world_size_nm)),
+            )
+            distance_to_shore = dist(candidate, self.shore_station_position)
+            if min_distance <= distance_to_shore <= max_distance:
+                return candidate
+        return (
+            float(self.rng.uniform(0.0, self.world_size_nm)),
+            float(self.rng.uniform(0.0, self.world_size_nm)),
+        )
+
     def _relay_packets(self) -> list[tuple[int, int]]:
         """Relay local weather packets and SOS messages among nearby vessels."""
         relay_links: list[tuple[int, int]] = []
         active = [v for v in self.vessels if v.state in {VesselState.ACTIVE, VesselState.EVAC}]
+        if not self.config.mesh_enabled:
+            for vessel in active:
+                if vessel.state == VesselState.EVAC and not vessel.sos_sent:
+                    self.coastal_station.receive_sos(
+                        SosPacket(
+                            sender_id=vessel.unique_id,
+                            position=vessel.position,
+                            tick_sent=self.tick,
+                        )
+                    )
+                    vessel.sos_sent = True
+            return relay_links
         for sender in active:
             sender.mesh_relay.reset_tick()
             weather_packet = MeshPacket(
@@ -164,18 +192,21 @@ class MaritimeModel(Model):
             for receiver in active:
                 if receiver.unique_id == sender.unique_id:
                     continue
-                if dist(sender.position, receiver.position) <= 15.0:
+                if dist(sender.position, receiver.position) <= VESSEL_RADIO_RANGE_NM:
                     receiver.inbox.append(weather_packet)
                     relay_links.append((sender.unique_id, receiver.unique_id))
-            if sender.state == VesselState.EVAC:
+            if sender.state == VesselState.EVAC and not sender.sos_sent:
                 sos = SosPacket(
                     sender_id=sender.unique_id, position=sender.position, tick_sent=self.tick
                 )
                 self.coastal_station.receive_sos(sos)
+                sender.sos_sent = True
         return relay_links
 
     def dispatch_rescue(self, packet: SosPacket) -> None:
         """Spawn rescue asset for SOS packet and add to scheduler."""
+        if packet.sender_id not in self._sos_dispatch_tick_by_vessel:
+            self._sos_dispatch_tick_by_vessel[packet.sender_id] = self.tick
         asset = (
             RescueAssetType.HELICOPTER if self.rng.random() < 0.5 else RescueAssetType.PATROL_VESSEL
         )
@@ -189,6 +220,20 @@ class MaritimeModel(Model):
         )
         self.rescue_agents.append(rescue_agent)
         self.scheduler.add(rescue_agent)
+
+    def _record_rescue_arrivals(self) -> None:
+        """Track time-to-arrival once a distressed vessel is rescued."""
+        for vessel in self.vessels:
+            if vessel.state != VesselState.RESCUED:
+                continue
+            if vessel.unique_id in self._recorded_rescue_vessels:
+                continue
+            if vessel.unique_id not in self._sos_dispatch_tick_by_vessel:
+                continue
+            dispatch_tick = self._sos_dispatch_tick_by_vessel[vessel.unique_id]
+            elapsed_ticks = max(0, self.tick - dispatch_tick)
+            self.kpi_logger.add_rescue_tta(elapsed_ticks * MACRO_TICK_HOURS)
+            self._recorded_rescue_vessels.add(vessel.unique_id)
 
     def step(self) -> None:
         """Advance model by one macro tick."""
@@ -208,6 +253,7 @@ class MaritimeModel(Model):
         relay_links = self._relay_packets()
         self.scheduler.step()
         collisions = self.collision_detector.check_and_apply(self.vessels)
+        self._record_rescue_arrivals()
         self.kpi_logger.add_collisions(len(collisions))
         self.kpi_logger.log_tick(
             tick=self.tick,
@@ -218,6 +264,7 @@ class MaritimeModel(Model):
             collisions=collisions,
             weather_field=self.weather_field,
             world_size_nm=self.world_size_nm,
+            simulation_seed=self.config.seed,
         )
         self.tick += 1
         self.utc_hours += MACRO_TICK_HOURS

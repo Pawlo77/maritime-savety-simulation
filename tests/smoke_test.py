@@ -1,3 +1,5 @@
+"""Basic smoke tests for project packaging and scaffold."""
+
 from pathlib import Path
 
 
