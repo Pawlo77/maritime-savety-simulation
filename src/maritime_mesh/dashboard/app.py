@@ -1,5 +1,6 @@
 """Streamlit dashboard app entrypoint with multi-page navigation."""
 
+import logging
 from pathlib import Path
 
 import pandas as pd
@@ -12,10 +13,15 @@ from maritime_mesh.dashboard.runner import parse_lane_definitions
 from maritime_mesh.dashboard.styles import apply_dashboard_style
 from maritime_mesh.experiment import scenarios
 from maritime_mesh.experiment.runner import ExperimentRunner
+from maritime_mesh.logging_config import configure_logging
+
+LOGGER = logging.getLogger(__name__)
 
 
 def main() -> None:
     """Render dashboard pages with Streamlit native navigation."""
+    configure_logging()
+    LOGGER.info("Starting dashboard app")
     st.set_page_config(
         page_title="Maritime Mesh Command",
         page_icon="⚓",

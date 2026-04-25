@@ -1,5 +1,6 @@
 """Root Mesa model for maritime weather mesh simulation."""
 
+import logging
 from collections import deque
 from math import dist
 
@@ -27,6 +28,8 @@ from maritime_mesh.world.collision_detector import CollisionDetector
 from maritime_mesh.world.land import WorldLand
 from maritime_mesh.world.lane import ShippingLane, Waypoint
 
+LOGGER = logging.getLogger(__name__)
+
 
 class MaritimeModel(Model):
     """Orchestrates all agents, weather, relay, collisions, and KPI logging."""
@@ -35,6 +38,13 @@ class MaritimeModel(Model):
         """Initialize model components from immutable run config."""
         super().__init__()
         self.config = config
+        LOGGER.info(
+            "Creating MaritimeModel (scenario=%s method=%s seed=%s ticks=%s)",
+            config.scenario.name,
+            config.method.value,
+            config.seed,
+            config.n_ticks,
+        )
         self.rng = np.random.default_rng(config.seed)
         self.weather_field = WeatherField(
             rng=self.rng,
@@ -100,6 +110,12 @@ class MaritimeModel(Model):
         self._lanes = self._build_lanes()
         self._validate_lane_geometry()
         self._spawn_agents()
+        LOGGER.info(
+            "Model ready: vessels=%s shore_stations=%s scheduler=%s",
+            len(self.vessels),
+            len(self.coastal_stations),
+            type(self.scheduler).__name__,
+        )
 
     def _new_id(self) -> int:
         """Return next deterministic agent identifier."""
@@ -558,6 +574,13 @@ class MaritimeModel(Model):
             self.scheduler.add("rescue", rescue_agent)
         else:
             self.scheduler.add(rescue_agent)
+        LOGGER.info(
+            "Rescue dispatched: vessel=%s rescue_id=%s asset=%s from=%s",
+            packet.sender_id,
+            rescue_agent.unique_id,
+            asset.value,
+            dispatch_position,
+        )
 
     def _record_rescue_arrivals(self) -> None:
         """Track time-to-arrival once a distressed vessel is rescued."""
@@ -603,12 +626,18 @@ class MaritimeModel(Model):
             and self.config.scenario.hazard_spike_value is not None
         ):
             self.weather_field.inject_hazard_spike(25, 25, self.config.scenario.hazard_spike_value)
+            LOGGER.info(
+                "Hazard spike injected at tick=%s value=%s",
+                self.tick,
+                self.config.scenario.hazard_spike_value,
+            )
         if (
             self.config.scenario.noise_double_tick is not None
             and self.tick == self.config.scenario.noise_double_tick
         ):
             for station in self.coastal_stations:
                 station.shore_radio.noise_std *= 2.0
+            LOGGER.info("Shore radio noise doubled at tick=%s", self.tick)
 
         previous_positions = {vessel.unique_id: vessel.position for vessel in self.vessels}
         if isinstance(self.scheduler, PhaseScheduler):
@@ -645,6 +674,9 @@ class MaritimeModel(Model):
 
     def run(self) -> dict[str, float]:
         """Run configured number of ticks and return run KPIs."""
+        LOGGER.info("Model run started for %s ticks", self.config.n_ticks)
         for _ in range(self.config.n_ticks):
             self.step()
-        return self.kpi_logger.compute_kpis()
+        kpis = self.kpi_logger.compute_kpis()
+        LOGGER.info("Model run completed with KPIs=%s", sorted(kpis.keys()))
+        return kpis

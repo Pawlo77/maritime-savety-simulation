@@ -1,5 +1,6 @@
 """Experiment run helpers for GUI pages."""
 
+import logging
 from pathlib import Path
 
 import pandas as pd
@@ -8,6 +9,8 @@ from maritime_mesh.enums import MethodCondition
 from maritime_mesh.experiment import scenarios
 from maritime_mesh.experiment.runner import ExperimentRunner
 from maritime_mesh.world.land import WorldLand
+
+LOGGER = logging.getLogger(__name__)
 
 LaneDefinitions = tuple[tuple[str, tuple[tuple[float, float], ...]], ...]
 ShoreStations = tuple[tuple[float, float], ...]
@@ -120,6 +123,13 @@ def run_from_gui(
     max_workers: int = 1,
 ) -> pd.DataFrame:
     """Run experiment matrix from GUI controls."""
+    LOGGER.info(
+        "GUI run requested (scenarios=%s methods=%s seeds=%s workers=%s)",
+        len(selected_scenario_names),
+        len(selected_methods),
+        n_seeds,
+        max_workers,
+    )
     land = WorldLand.default_for_world_size(world_size_nm, profile=land_profile)
     effective_shores = shore_positions or (shore_position,)
     for position in effective_shores:
@@ -240,4 +250,6 @@ def run_from_gui(
             "max_spawn_distance_nm": max_spawn,
         },
     )
-    return runner.run_all()
+    result = runner.run_all()
+    LOGGER.info("GUI run finished with %s rows", len(result))
+    return result
