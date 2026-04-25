@@ -1,29 +1,402 @@
 \documentclass[cameraready]{Interspeech}
 \usepackage{float}
 \usepackage{amsmath}
+\usepackage{amssymb}
 \usepackage{hyperref}
 \usepackage{graphicx}
 \usepackage{tabularx}
+\usepackage{booktabs}
 \usepackage{array}
+\usepackage{enumitem}
 
-\title{TITLE}
+\title{Decentralised Weather Mesh Networking for Maritime Safety:
+       A Multi-Agent Simulation Study}
 
-\author[affiliation={1}]{Paweł}{Pozorski}
+\author[affiliation={1}]{Pawe\l}{Pozorski}
+\author[affiliation={1}]{Micha\l}{Pytel}
 
-\address{
-    $^1$ Warsaw University of Technology, Poland
-}
+\address{$^1$ Warsaw University of Technology, Poland}
 
-\email{pawel.pozorski.stud@pw.edu.pl}
+\email{\{pawel.pozorski, michal.pytel\}.stud@pw.edu.pl}
 
-\keywords{KEYWORDS}
+\keywords{maritime safety, multi-agent systems, agent-based modelling,
+decentralised communication, human factors, collision avoidance}
 
 \begin{document}
 
 \maketitle
 
+% ------------------------------------------------------------------
 \begin{abstract}
-ABSTRACT
+Between 70--96\,\% of maritime casualties involve human error~\cite{imohuman2018}; weather uncertainty compounds this when vessels lose shore radio coverage. Shore broadcasts carry Gaussian noise, cannot resolve localised storm cells, and leave vessels in radio shadows entirely uninformed. We model a decentralised ship-to-ship weather mesh in which vessels exchange local observations via a hop-limited gossip protocol, blending them with shore forecasts through confidence-weighted fusion. A preparedness score coupling forecast accuracy and crew fatigue gates all tactical decisions, including early evacuation. Against a classical and a shore-only baseline, the system is tested across four adversarial scenarios in a Mesa agent-based simulation with 30 seed-matched runs per condition. We hypothesise that the mesh will reduce the fatal event rate by at least ${\geq}20\,\%$ and improve post-collision survival by at least ${\geq}15\,\%$; the gains are expected to hold even when shore forecast noise doubles and all vessels operate beyond the $50$\,nm coastal radio horizon.
 \end{abstract}
+
+% ==================================================================
+\section{Introduction}
+\label{sec:intro}
+% ==================================================================
+
+Maritime transport carries roughly 80\,\% of global trade, yet the sector's safety record is dominated by a persistent human-error problem. The International Maritime Organization (IMO) attributes 70--96\,\% of all incidents to human causes~\cite{imohuman2018}, and the European Maritime Safety Agency (EMSA) identifies weather as a compounding factor in a disproportionate share of total-loss events, particularly in congested coastal corridors where crew fatigue and information latency interact~\cite{emsa2023}. Hull and machinery insurance claims exceed USD 3.5\,billion annually~\cite{iumi2023}; even a 5\,\% reduction in fatal incidents would yield hundreds of millions in avoided liability.
+
+The International Regulations for Preventing Collisions at Sea (COLREGs)~\cite{colregs1972} provide a deterministic collision-avoidance baseline whose implicit assumption — that crews have accurate, timely situational awareness — fails under three compounding conditions that prior agent-based maritime simulation literature~\cite{tam2010,silveira2013,zhang2015}
+has not addressed jointly:
+
+\begin{itemize}
+    \item \textbf{Imperfect weather-information flow.} Existing simulation models grant vessels omniscient access to the true weather field. In practice, shore broadcasts are noisy and range-limited; vessels beyond the coastal horizon have no external weather source at all.
+
+    \item \textbf{Human-factor coupling.} Crew fatigue accumulates over watch cycles and follows a circadian pattern with a late-night performance nadir~\cite{chauvin2013}. Prior models isolate fatigue in peripheral sub-models without direct connection to tactical decision logic.
+
+    \item \textbf{Cross-vessel survival and rescue logistics.} Evacuation timing and rescue Time-to-Arrival (TTA) are rarely co-modelled; the survival payoff of early, well-informed preparedness therefore cannot be quantified~\cite{goerlandt2014}.
+\end{itemize}
+
+
+The contribution of this work is a \emph{ship-to-ship weather mesh network} grounded in epidemic broadcast theory~\cite{demers1987} and decentralised maritime navigation research~\cite{naus2016}. Vessels relay local weather observations to neighbours via a two-hop gossip protocol, bridging radio shadows and compensating for shore forecast degradation. Fatigue and circadian phase are embedded directly in a preparedness score that governs every manoeuvre and evacuation decision, creating a quantified causal link from \emph{information quality} to \emph{crew survival}.
+
+% ==================================================================
+\section{Research Objectives}
+\label{sec:goal}
+% ==================================================================
+
+The central thesis is: \emph{decentralised ship-to-ship weather mesh networking, coupled with human-factor-aware preparedness scoring, reduces fatal maritime outcomes more effectively than centralised shore-broadcast systems alone.}
+
+\begin{description}
+    \item[Experimental conditions.] All experiments compare three methods:
+        \begin{description}[leftmargin=2.2em, labelindent=0pt]
+            \item[Baseline~A (Classical)] represents current practice: vessels follow COLREGs with no weather intelligence and no preparedness modifier.
+            \item[Baseline~B (Shore-Only)] adds reception of the coastal station broadcast when in range, but has no peer relay and no confidence-weighted fusion.
+            \item[Proposed System] integrates the full decentralised mesh — hop-limited relay, confidence-weighted forecast fusion, adaptive shore-trust decay, preparedness scoring, early evacuation, and SOS relay — all described formally in Sections~\ref{sec:comms} and~\ref{sec:behaviour}. Performance is measured using six KPIs defined in Table~\ref{tab:kpis}.
+        \end{description}
+
+    \item[Falsifiable hypotheses.] They drive all design decisions; any component that contributes to none of them is excluded.
+        \begin{description}[leftmargin=2.2em, labelindent=0pt]
+            \item[\textbf{H1.}] Enabling the mesh reduces the fatal event rate (Table~\ref{tab:kpis}, KPI~1) by ${\geq}20\,\%$ versus Baseline~A ($p < 0.05$, Mann-Whitney U, Cliff's $\Delta > 0.2$).
+            \item[\textbf{H2.}] Early mesh-informed evacuation improves post-collision survival (Table~\ref{tab:kpis}, KPI~3) by ${\geq}15\,\%$ versus Baseline~A.
+            \item[\textbf{H3.}] The Proposed System outperforms Baseline~B on fatal event rate ($p < 0.05$) even when shore forecast standard deviation doubles and all vessels spawn beyond the 50\,nm coastal radio horizon.
+        \end{description}
+
+\end{description}
+
+% ==================================================================
+\section{System Model}
+\label{sec:model}
+% ==================================================================
+
+This section describes the simulation environment, agent types, weather field, communication protocol, and behavioural models.
+
+\subsection{World Geometry and Time Resolution}
+
+The simulation occupies a $100 \times 100$\,nm continuous space implemented with the Mesa agent-based modelling framework~\cite{mesa2020}. Three pre-defined shipping lanes cross the world: a north--south freighter route, an east--west tanker route, and a diagonal coastal ferry route. A single coastal station is fixed at $(0,50)$\,nm — the western boundary — with a broadcast radius of $R_\text{shore} = 50$\,nm.
+
+The scheduler runs at a \emph{macro tick} of 15\,min ($\Delta t = 0.25$\,hr) for all strategic logic. Whenever any vessel pair closes to within 5\,nm, the step function switches to \emph{micro ticks} of 30\,s for COLREGs resolution, returning to macro mode once separation is restored. All stochastic draws share a single seeded random-number generator so that two runs with the same seed produce byte-identical KPI logs.
+
+\subsection{Agent Types}
+
+The system relies on three agent types:
+
+\begin{description}
+    \item[Vessel agents] traverse the shipping lanes following pre-defined waypoints. Each maintains position, heading, speed, and crew archetype (Veteran / Standard / Green), together with accumulated fatigue (\texttt{hours\_awake}), a local weather observation at the vessel's current cell, a radio inbox of received mesh packets, and a preparedness score $P_\text{prep}$ (Section~\ref{sec:behaviour}) that gates all tactical decisions. State transitions follow: \texttt{ACTIVE} $\to$ \texttt{EVAC} $\to$ \texttt{SUNK} or \texttt{RESCUED}.
+
+    \item[Coastal station agents] are stationary. Each tick they sample the true weather at their position, add Gaussian forecast noise (Eq.~\ref{eq:shoreNoise}), and broadcast to all vessels satisfying the receive probability criterion (Eq.~\ref{eq:Prx}). They also maintain an SOS dispatch queue and direct the nearest idle rescue asset on receipt of a distress call.
+
+    \item[Rescue agents] are spawned on SOS dispatch. Helicopter assets travel at 80\,kn; patrol vessels at 25\,kn~\cite{imosar2018}. On arrival at the distress position, surviving crew members transition to \texttt{RESCUED} and the \texttt{survival\_ratio} counter increments (Table~\ref{tab:kpis}, KPI~3). For simplicity, rescue assets are modelled with perfect weather information, no fatigue, and unlimited range and capacity; they are never lost to the environment.
+\end{description}
+
+\subsection{Weather Field}
+
+A $50 \times 50$-cell grid evolves via Perlin noise~\cite{perlin1985}, producing spatially coherent, temporally drifting hazard patterns. Three physical channels — sea state, visibility, and wind intensity — are combined into a single normalised hazard scalar $W_{ij} \in [0,1]$, where $i$ and $j$ index the weather-grid cell:
+%
+\begin{equation}
+  W_{ij} = w_s\,\text{sea\_state}_{ij}
+          + w_v\,(1 - \text{vis}_{ij})
+          + w_w\,\lVert\vec{V}_\text{wind,ij}\rVert_\text{norm},
+  \label{eq:W}
+\end{equation}
+%
+with weights $w_s = 0.4$, $w_v = 0.3$, $w_w = 0.3$ (sum to $1$). Each vessel observes weather $W$ only at its current position, enforcing the information asymmetry that the mesh network is designed to overcome.
+
+Motivation behind the weights is as follows: sea state is the most direct hazard to vessel stability; visibility affects collision risk and navigation accuracy; wind intensity impacts both stability and manoeuvrability. The linear combination allows for a single scalar hazard metric that can be easily integrated into the behavioural models while still capturing the multi-dimensional nature of maritime weather risk. Their precise values are chosen based on author domain knowledge and can be adjusted in sensitivity analyses without affecting the overall model structure.
+
+% ==================================================================
+\section{Decentralised Communication Protocol}
+\label{sec:comms}
+% ==================================================================
+
+This section formalises the communication and information fusion mechanisms that underpin the Proposed System, including the shore broadcast model, mesh packet relay protocol, confidence-weighted forecast fusion, and adaptive shore-trust decay.
+
+\subsection{Shore Broadcast and Receive Probability}
+
+Every tick, the coastal station transmits a noisy estimate of the hazard at its location:
+%
+\begin{equation}
+  \hat{W}_\text{shore} = \text{clip}\bigl(W_\text{true} + \epsilon,\,0,\,1\bigr),
+  \quad \epsilon \sim \mathcal{N}(\mu_\text{shore},\,\sigma_\text{shore}^2),
+  \label{eq:shoreNoise}
+\end{equation}
+%
+with $\mu_\text{shore} = 0.05$ and $\sigma_\text{shore} = 0.18$ under normal conditions ($0.36$ in the H3 stress test). A vessel receives this broadcast only if a Bernoulli draw with probability
+%
+\begin{equation}
+  P_\text{rx} = \sigma\left(
+    \frac{R_\text{shore} - d_\text{ship}}{\kappa_\text{radio}}
+    - w_\text{intf}\,W
+  \right)
+  \label{eq:Prx}
+\end{equation}
+%
+succeeds, where $\kappa_\text{radio} = 10$ controls range fall-off and $w_\text{intf} = 0.8$ models the attenuation of radio signals in heavy weather. $\sigma(\cdot)$ denotes the logistic sigmoid throughout.
+
+Motivation for this model is as follows: the probability of receiving the shore broadcast decreases with distance from the coastal station, reflecting the physical limitations of radio propagation. Additionally, higher local hazard levels further reduce reception probability, simulating the real-world phenomenon where severe weather can interfere with communication signals. This creates a realistic information gradient that the mesh network must navigate to provide timely hazard intelligence to vessels in distress.
+
+The parameters $\kappa_\text{radio}$ and $w_\text{intf}$ are chosen to produce a realistic reception profile, with a sharp drop-off beyond the 50\,nm range and significant degradation in high-hazard conditions, while still allowing for some successful receptions at the edge of the coverage area under moderate weather. $\mu_\text{shore}$ and $\sigma_\text{shore}$ are set to reflect typical forecast errors observed in coastal weather stations, ensuring that the shore broadcast provides useful but imperfect information that the mesh can enhance.
+
+\subsection{Mesh Packet Relay}
+
+When the mesh is active (Proposed System only), every vessel periodically broadcasts a structured packet carrying sender identity, current position, observed $W$, observation tick, and a hop counter initialised to zero. A receiving vessel relays the packet onward only if (i)~the hop count is below two, and (ii)~the packet has not been seen in the current tick (duplicate suppression via a per-tick seen-set). With vessel radio ranges of 15\,nm, a two-hop chain bridges up to 45\,nm beyond the coastal horizon — precisely the coverage gap targeted by H3.
+
+SOS packets follow the same relay path with priority pre-emption: on receipt, a vessel immediately re-broadcasts before processing its own weather logic, so SOS propagation latency is bounded to a single 15\,min macro tick regardless of the number of intermediate relays.
+
+\subsection{Confidence-Weighted Forecast Fusion}
+
+Each packet in a vessel's inbox carries a confidence weight that decays with both age and relay distance:
+%
+\begin{equation}
+  c_k = \frac{1}{1 + \texttt{age\_ticks}_k}
+        \cdot
+        \frac{1}{1 + \texttt{hops}_k}.
+  \label{eq:confidence}
+\end{equation}
+%
+The mesh-derived hazard estimate is the confidence-weighted mean:
+%
+\begin{equation}
+  \hat{W}_\text{ship} =
+    \frac{\displaystyle\sum_k c_k\, W_k}{\displaystyle\sum_k c_k}.
+  \label{eq:meshblend}
+\end{equation}
+
+Motivation for this approach is as follows: confidence weighting allows vessels to integrate multiple observations while accounting for their relative reliability. Older observations and those that have traversed more hops are less likely to reflect current local conditions, so they contribute less to the blended forecast. This mechanism enables vessels to dynamically adjust their hazard estimates based on the freshness and proximity of the information, which is critical for making informed tactical decisions in a rapidly changing environment. The use of a simple inverse relationship for confidence decay is computationally efficient and captures the intuitive notion that more recent and closer observations are more trustworthy, without requiring complex parameter tuning.
+
+\subsection{Adaptive Shore-Trust Decay}
+
+A vessel counts how many ticks have elapsed since its last valid shore broadcast (\texttt{shore\_age\_ticks}). Shore trust decays exponentially with that count:
+%
+\begin{equation}
+  \lambda_\text{ship} = 1 - e^{-k_\lambda\,/\,\texttt{shore\_age\_ticks}},
+  \quad k_\lambda = 5,
+  \label{eq:lambda}
+\end{equation}
+%
+giving $\lambda_\text{ship} \approx 0$ when shore data is fresh and $\lambda_\text{ship} \to 1$ as it ages. The blended forecast fuses both sources proportionally:
+%
+\begin{equation}
+  \hat{W}_\text{blend} =
+    \lambda_\text{ship}\,\hat{W}_\text{ship}
+    + (1 - \lambda_\text{ship})\,\hat{W}_\text{shore}.
+  \label{eq:blend}
+\end{equation}
+%
+The residual forecast error $E_\text{wx} = |\hat{W}_\text{blend} - W_\text{true}|$ feeds directly into the preparedness score (Eq.~\ref{eq:Pprep}).
+
+This model was inspired by the concept of a Kalman gain in sensor fusion, where the weight assigned to each information source is inversely related to its uncertainty. In this case, the uncertainty of the shore forecast increases with time since the last valid reception, while the mesh-derived estimate's reliability depends on the freshness and proximity of received observations. By blending the two sources based on their relative trustworthiness, vessels can maintain a more accurate and responsive hazard estimate, which is crucial for effective decision-making in dynamic maritime environments. The exponential decay function provides a smooth transition from reliance on shore data to reliance on mesh data, ensuring that vessels can adapt to changing information conditions without abrupt shifts in behaviour.
+
+% ==================================================================
+\section{Behavioural Models}
+\label{sec:behaviour}
+% ==================================================================
+
+This section formalises how vessels translate their blended hazard estimates and human factors into tactical decisions, including course alterations, speed adjustments, and evacuation triggers. It also models the post-evacuation survival process and collision detection mechanism.
+
+\subsection{Human Factors and Preparedness Score}
+
+Crew error probability integrates accumulated fatigue and the circadian rhythm of human vigilance. The circadian component is modelled as a cosine whose minimum falls at 03:00~UTC, the well-documented performance nadir of watch-keepers~\cite{chauvin2013}. The phase offset $\phi_\text{nadir} = 3$ (hours UTC) locates that trough:
+%
+\begin{equation}
+  F_\text{circ} = \cos\left(\tfrac{2\pi}{24}
+                  (t_\text{utc} - \phi_\text{nadir})\right).
+  \label{eq:circadian}
+\end{equation}
+%
+Combining fatigue, circadian phase, and crew archetype into a single error probability:
+%
+\begin{equation}
+  P_\text{err} = \sigma\left(
+    w_a\cdot\texttt{hours\_awake}
+    + w_c\cdot F_\text{circ}
+    + \text{Arch\_Mod} - B_c
+  \right),
+  \label{eq:Perr}
+\end{equation}
+%
+with $w_a = 0.12$, $w_c = 1.5$, $B_c = 4.0$, and archetype modifiers of $-1.5$ (Veteran), $0.0$ (Standard), and $+2.0$ (Green crew). Higher $P_\text{err}$ reflects a more error-prone watch.
+
+The \emph{preparedness score} $P_\text{prep} \in [0,1]$ captures how well a vessel is positioned to respond to hazards, penalising both forecast inaccuracy and a high-risk crew archetype:
+%
+\begin{equation}
+  P_\text{prep} = \text{clip}\left(
+    1 - \eta\,E_\text{wx} - \xi\,\text{Arch\_Mod},\,0,\,1
+  \right),
+  \label{eq:Pprep}
+\end{equation}
+%
+with $\eta = 1.5$ and $\xi = 0.2$. $P_\text{prep}$ gates every tactical decision each tick: course alteration, speed reduction, and the evacuation trigger below.
+
+Upper definitions were motivated by the need to create a single scalar metric that encapsulates the complex interplay between human factors and information quality. The parameters were chosen to produce a realistic range of preparedness scores across different crew archetypes and forecast error levels, ensuring that the model captures the intuitive notion that both human performance and information reliability are critical for effective hazard response. By integrating these factors into a single score, the model allows for a direct causal pathway from the quality of weather intelligence to the likelihood of successful navigation and survival outcomes, which is central to testing the study's hypotheses.
+
+\subsection{Early Evacuation Decision}
+
+Each tick, a vessel samples whether to initiate evacuation:
+%
+\begin{equation}
+  P_\text{evac} = \sigma\left(
+    \alpha\,\hat{W}_\text{blend}
+    - \beta\,E_\text{wx}
+    + \gamma\,P_\text{prep}
+  \right),
+  \label{eq:evac}
+\end{equation}
+%
+with $\alpha = 4.0$, $\beta = 2.5$, $\gamma = 1.8$.
+A high blended hazard estimate and a high preparedness score promote early
+evacuation; large forecast error suppresses it, preventing false alarms.
+On trigger, the vessel broadcasts an SOS packet and begins raft deployment.
+
+As with all behavioural models, the parameters $\alpha$, $\beta$, and $\gamma$ were chosen to produce a realistic evacuation activation rate (KPI~5) of around 20\,\% in the high-hazard Scenario~2, while still allowing for significant variation across scenarios and conditions to test the hypotheses effectively. The logistic sigmoid ensures that $P_\text{evac}$ remains between 0 and 1, providing a probabilistic decision framework that captures the inherent uncertainty in evacuation timing. The model creates a direct causal pathway from information quality (via $E_\text{wx}$) and crew readiness (via $P_\text{prep}$) to the critical decision of when to evacuate, which is central to the study's investigation of how decentralised weather intelligence can improve maritime safety outcomes.
+
+\subsection{Raft Deployment and Post-Incident Survival}
+
+Whether a life-raft deploys successfully depends on both current weather severity and how prepared the crew is:
+%
+\begin{equation}
+  P_\text{raft} = \text{clip}\left(
+    B_\text{raft} - \delta_\text{wx}\,W + \delta_\text{prep}\,P_\text{prep},
+    \,0,\,1\right),
+  \label{eq:raft}
+\end{equation}
+%
+with $B_\text{raft} = 0.90$, $\delta_\text{wx} = 0.60$, $\delta_\text{prep} = 0.25$. Once in rafts, crew members remain exposed until rescue arrives. Time-to-Arrival (TTA) is:
+%
+\begin{equation}
+  \text{TTA} = \frac{d_\text{ship,shore}}{v_\text{rescue}}
+               + \Delta t_\text{mob},
+  \label{eq:tta}
+\end{equation}
+%
+where $v_\text{rescue} = 80$\,kn (helicopter) and $\Delta t_\text{mob} = 2$ ticks for mobilisation. Survivor probability per raft-tick decreases linearly with current $W$, so evacuating earlier — when $W$ is still moderate — directly improves survival. This is the causal mechanism behind H2: better mesh coverage $\to$ lower $E_\text{wx}$ $\to$ higher $P_\text{prep}$ $\to$ earlier evacuation $\to$ lower $W$ at evacuation time $\to$ higher survival.
+
+Behavior of this model was motivated by the need to capture the critical importance of evacuation timing in determining survival outcomes. By linking the probability of successful raft deployment to both current weather conditions and crew preparedness, the model reflects the real-world challenges faced by mariners in deciding when to abandon ship. The linear decrease in survivor probability with increasing hazard severity underscores the urgency of timely evacuation, creating a direct causal pathway from the quality of weather intelligence (via $E_\text{wx}$) to survival outcomes, which is central to testing H2. The parameters were chosen to produce a realistic range of evacuation success rates and survival probabilities across different scenarios, allowing for meaningful comparisons between the Proposed System and the baselines.
+
+\subsection{Collision Detection}
+
+Collisions are detected using Shapely circle intersection at a collision
+radius of $r = 0.15$\,nm, consistent with near-miss studies on vessel
+encounter geometry~\cite{zhang2015}.
+Each intersection increments both vessels' damage counters; damage above
+the stability threshold causes a transition to \texttt{SUNK} and increments
+the fatality counter (KPI~1, Table~\ref{tab:kpis}).
+
+% ==================================================================
+\section{Experimental Design}
+\label{sec:experiment}
+% ==================================================================
+
+This section defines the experimental conditions, scenarios, KPIs, and statistical analysis methods used to test the hypotheses.
+
+\subsection{Methods Under Test}
+
+The three experimental conditions introduced in Section~\ref{sec:goal} are formally defined as follows:
+
+\begin{itemize}[leftmargin=1.2em, itemsep=2pt]
+    \item \textbf{Baseline~A (Classical):} No weather intelligence; no preparedness modifier; deterministic COLREGs navigation only. $P_\text{prep} \equiv 0$ throughout.
+    \item \textbf{Baseline~B (Shore-Only):} Shore forecast received via Eqs.~\ref{eq:shoreNoise}--\ref{eq:Prx} when in range; no mesh relay; no confidence fusion; no adaptive trust weighting. $\lambda_\text{ship} \equiv 0$, so $\hat{W}_\text{blend} \equiv \hat{W}_\text{shore}$.
+    \item \textbf{Proposed System:} Full pipeline — Eqs.~\ref{eq:shoreNoise}--\ref{eq:blend} for forecast fusion, Eqs.~\ref{eq:Pprep}--\ref{eq:raft} for behaviour, and hop-limited SOS relay.
+\end{itemize}
+
+An ablation matrix additionally disables each component in turn: mesh off ($\lambda_\text{ship} \equiv 0$), evacuation off ($P_\text{evac} \equiv 0$), human factors off ($P_\text{err} \equiv 0$).
+
+\subsection{Scenarios}
+
+Table~\ref{tab:scenarios} summarises the four scenarios. All share the same $100 \times 100$\,nm world; each is implemented as a factory function that configures the model constructor with no scenario-specific branching inside agent code. Every scenario runs 30 independent seeds.
+
+\begin{table}[htbp]
+    \caption{Scenario summary. $\sigma_\text{shore}$ is shore forecast standard deviation. All scenarios use 30 seeds.}
+    \label{tab:scenarios}
+    \centering
+    \small
+    \begin{tabularx}{\columnwidth}{@{}lXr@{}}
+        \toprule
+        Scenario & Key conditions & Hyp. \\
+        \midrule
+        1 — Calm Passage &
+        20 vessels, $W{<}0.15$, $\sigma_\text{shore}{=}0.05$.
+        Pass: ${<}0.5$ collisions per 1\,k ship-hrs. &
+        Calib. \\[4pt]
+        2 — Storm Corridor &
+        25 vessels (30\,\% Green crew); $W{>}0.75$ cell on E--W lane;
+        $\sigma_\text{shore}{=}0.18$. &
+        H1 \\[4pt]
+        3 — Blind Shore &
+        25 vessels at 40--70\,nm; $\sigma_\text{shore}$ doubles to $0.36$
+        at tick~40. &
+        H3 \\[4pt]
+        4 — Deep Water Rescue &
+        15 vessels ${>}60$\,nm offshore; $W$ spikes to 0.90 at tick~30;
+        no vessel within shore radio range. &
+        H2, H3 \\
+        \bottomrule
+    \end{tabularx}
+\end{table}
+
+\subsection{Key Performance Indicators}
+
+Table~\ref{tab:kpis} defines the six KPIs collected per run. KPIs~1--2 test H1, KPIs~3--5 test H2, and KPI~6 tests H3. All are computed from the per-tick Pandas log flushed to Parquet at run end, ensuring reproducibility.
+
+\begin{table}[htbp]
+    \caption{KPI definitions and hypothesis links. \textit{ship-hrs} $=$ total agent-hours in \texttt{ACTIVE} or \texttt{EVAC} state.}
+    \label{tab:kpis}
+    \centering
+    \small
+    \begin{tabularx}{\columnwidth}{@{}clXc@{}}
+        \toprule
+        \# & KPI & Definition & Hyp. \\
+        \midrule
+        1 & \texttt{fatal\_per\_1k\_hrs}
+        & Fatal events $\div$ ship-hrs $\times 10^3$
+        & H1 \\
+        2 & \texttt{collision\_per\_1k\_hrs}
+        & Collision events $\div$ ship-hrs $\times 10^3$
+        & H1 \\
+        3 & \texttt{survival\_ratio}
+        & Survivors\,/\,(survivors + fatalities)
+        & H2 \\
+        4 & \texttt{avg\_tta\_hours}
+        & Mean rescue Time-to-Arrival across dispatches
+        & H2 \\
+        5 & \texttt{evac\_activation\_rate}
+        & Fraction of vessels that triggered early evac.
+        & H2, H3 \\
+        6 & \texttt{mean\_p\_prep}
+        & Time-averaged $P_\text{prep}$ across all vessels
+        & H3 \\
+        \bottomrule
+    \end{tabularx}
+\end{table}
+
+\subsection{Statistical Analysis}
+
+Hypothesis decisions use the Mann-Whitney U test — appropriate for the bounded, non-normal KPI distributions produced by a finite-agent simulation. Effect sizes are reported as Cliff's $\Delta$~\cite{cliff1993}; both $p < 0.05$ and $\Delta > 0.2$ (small effect) are required for H1 and H3 to be confirmed. Confidence intervals are bootstrapped over the 30 seeds. The same seed sequence is applied to all conditions to eliminate seed-selection bias from pairwise comparisons.
+
+% ==================================================================
+\section{Discussion}
+\label{sec:discussion}
+% ==================================================================
+
+The target reference rate for calibration — 5 fatal events per $1\,000$ ship-hours under Baseline~A in Scenario~2 (Table~\ref{tab:scenarios}) — is grounded in AIS-derived near-miss encounter statistics~\cite{silveira2013}. If H1 or H2 fail statistically, the mitigation is to recalibrate $\alpha$, $\beta$, $\gamma$ in Eq.~\ref{eq:evac} or widen $\sigma_\text{shore}$ before final reporting; design parameters were chosen conservatively to make this adjustment feasible without invalidating the comparison.
+
+The two-hop relay is sized deliberately: with $15$\,nm vessel radio range and vessels distributed along the 100\,nm east--west tanker lane, three ships can collectively bridge the 45\,nm shore shadow tested in Scenario~4 (Table~\ref{tab:scenarios}). Removing the hop limit (unbounded flooding) would close the gap trivially and obscure the protocol's practical value; the two-hop constraint models a real latency and battery trade-off in maritime IoT deployment.
+
+The simulation is kept compact — up to 50 agents and a $50 \times 50$ weather grid — to remain within a 16\,GB RAM ceiling and to produce visually legible scenario track maps in a live Streamlit dashboard. The framework is nonetheless extensible: lane geometry, agent counts, weather severity, and $\sigma_\text{shore}$ are all constructor parameters, and additional experiment configurations can be added as factory functions without modifying any agent logic.
+
+\bibliographystyle{IEEEtran}
+\bibliography{mybib}
 
 \end{document}
