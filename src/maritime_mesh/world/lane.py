@@ -17,12 +17,29 @@ class ShippingLane:
 
     def __init__(self, name: str, waypoints: list[Waypoint]) -> None:
         """Initialize lane metadata and waypoints."""
+        if len(waypoints) < 2:
+            raise ValueError("Shipping lanes require at least two waypoints.")
         self.name = name
         self.waypoints = waypoints
 
+    def closest_waypoint_index(self, current_position: tuple[float, float]) -> int:
+        """Return index of the nearest waypoint to current position."""
+        return min(
+            range(len(self.waypoints)),
+            key=lambda index: dist(
+                current_position,
+                (self.waypoints[index].x_nm, self.waypoints[index].y_nm),
+            ),
+        )
+
+    def waypoint_at(self, index: int) -> Waypoint:
+        """Return lane waypoint at index with looped wrapping."""
+        return self.waypoints[index % len(self.waypoints)]
+
+    def next_index(self, index: int) -> int:
+        """Return next waypoint index with looped wrapping."""
+        return (index + 1) % len(self.waypoints)
+
     def next_waypoint(self, current_position: tuple[float, float]) -> Waypoint:
         """Return nearest waypoint to current vessel position."""
-        return min(
-            self.waypoints,
-            key=lambda waypoint: dist(current_position, (waypoint.x_nm, waypoint.y_nm)),
-        )
+        return self.waypoint_at(self.closest_waypoint_index(current_position))

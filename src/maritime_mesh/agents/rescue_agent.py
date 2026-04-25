@@ -40,6 +40,7 @@ class RescueAgent(AbstractMesaAgent):
         self.target_position = target_position
         self.mobilisation_ticks_remaining = RESCUE_MOBILISATION_TICKS
         self.is_idle = False
+        self.target_vessel_id: int | None = None
 
     def step(self) -> None:
         """Advance countdown or move toward target and rescue survivors."""
@@ -55,9 +56,12 @@ class RescueAgent(AbstractMesaAgent):
                     and dist(vessel.position, self.target_position) <= 0.2
                 ):
                     vessel.state = VesselState.RESCUED
+                    self.is_idle = True
             return
 
-        step_nm = min(distance_to_target, self.speed_kn * MACRO_TICK_HOURS)
+        local_hazard = self.model.weather_field.hazard_at(*self.position)
+        hazard_speed_penalty = max(0.4, 1.0 - (0.35 * local_hazard))
+        step_nm = min(distance_to_target, self.speed_kn * hazard_speed_penalty * MACRO_TICK_HOURS)
         angle = atan2(
             self.target_position[1] - self.position[1],
             self.target_position[0] - self.position[0],

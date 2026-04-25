@@ -63,7 +63,7 @@ The central thesis is: \emph{decentralised ship-to-ship weather mesh networking,
     \item[Experimental conditions.] All experiments compare three methods:
         \begin{description}[leftmargin=2.2em, labelindent=0pt]
             \item[Baseline~A (Classical)] represents current practice: vessels follow COLREGs with no weather intelligence and no preparedness modifier.
-            \item[Baseline~B (Shore-Only)] adds reception of the coastal station broadcast when in range, but has no peer relay and no confidence-weighted fusion.
+            \item[Baseline~B (Shore-Only)] adds reception of coastal-station broadcasts when in range, but has no peer relay and no confidence-weighted fusion.
             \item[Proposed System] integrates the full decentralised mesh — hop-limited relay, confidence-weighted forecast fusion, adaptive shore-trust decay, preparedness scoring, early evacuation, and SOS relay — all described formally in Sections~\ref{sec:comms} and~\ref{sec:behaviour}. Performance is measured using six KPIs defined in Table~\ref{tab:kpis}.
         \end{description}
 
@@ -85,7 +85,7 @@ This section describes the simulation environment, agent types, weather field, c
 
 \subsection{World Geometry and Time Resolution}
 
-The simulation occupies a $100 \times 100$\,nm continuous space implemented with the Mesa agent-based modelling framework~\cite{mesa2020}. Three pre-defined shipping lanes cross the world: a north--south freighter route, an east--west tanker route, and a diagonal coastal ferry route. A single coastal station is fixed at $(0,50)$\,nm — the western boundary — with a broadcast radius of $R_\text{shore} = 50$\,nm.
+The simulation occupies a $100 \times 100$\,nm continuous space implemented with the Mesa agent-based modelling framework~\cite{mesa2020}. The world includes an explicit static land mask with a western coastline and multiple islands/banks, used consistently in both runtime dynamics and dashboard rendering. Default traffic uses three non-linear waypoint routes (coastal corridor, southern arc, northern bypass) to generate realistic turning behaviour around land obstacles. Shipping lanes are represented as ordered waypoint polylines constrained to open water (lane segments intersecting land are rejected at configuration time). The model supports one or more coastal stations; each station must be placed on land and broadcasts with radius $R_\text{shore} = 50$\,nm.
 
 The scheduler runs at a \emph{macro tick} of 15\,min ($\Delta t = 0.25$\,hr) for all strategic logic. Whenever any vessel pair closes to within 5\,nm, the step function switches to \emph{micro ticks} of 30\,s for COLREGs resolution, returning to macro mode once separation is restored. All stochastic draws share a single seeded random-number generator so that two runs with the same seed produce byte-identical KPI logs.
 
@@ -94,9 +94,9 @@ The scheduler runs at a \emph{macro tick} of 15\,min ($\Delta t = 0.25$\,hr) for
 The system relies on three agent types:
 
 \begin{description}
-    \item[Vessel agents] traverse the shipping lanes following pre-defined waypoints. Each maintains position, heading, speed, and crew archetype (Veteran / Standard / Green), together with accumulated fatigue (\texttt{hours\_awake}), a local weather observation at the vessel's current cell, a radio inbox of received mesh packets, and a preparedness score $P_\text{prep}$ (Section~\ref{sec:behaviour}) that gates all tactical decisions. State transitions follow: \texttt{ACTIVE} $\to$ \texttt{EVAC} $\to$ \texttt{SUNK} or \texttt{RESCUED}.
+    \item[Vessel agents] traverse shipping lanes as ordered waypoint sequences (not nearest-point shortcuts), enabling non-linear route geometry. Each maintains position, heading, speed, and crew archetype (Veteran / Standard / Green), together with accumulated fatigue (\texttt{hours\_awake}), a local weather observation at the vessel's current cell, a radio inbox of received mesh packets, and a preparedness score $P_\text{prep}$ (Section~\ref{sec:behaviour}) that gates all tactical decisions. State transitions follow: \texttt{ACTIVE} $\to$ \texttt{EVAC} $\to$ \texttt{SUNK} or \texttt{RESCUED}.
 
-    \item[Coastal station agents] are stationary. Each tick they sample the true weather at their position, add Gaussian forecast noise (Eq.~\ref{eq:shoreNoise}), and broadcast to all vessels satisfying the receive probability criterion (Eq.~\ref{eq:Prx}). They also maintain an SOS dispatch queue and direct the nearest idle rescue asset on receipt of a distress call.
+    \item[Coastal station agents] are stationary. Each tick they sample the true weather at their position, add Gaussian forecast noise (Eq.~\ref{eq:shoreNoise}), and broadcast to vessels satisfying the receive probability criterion (Eq.~\ref{eq:Prx}). Distress signals are probabilistically received by shore stations using the same radio model; rescue assets are spawned from the station that successfully received the SOS, not from a globally fixed origin.
 
     \item[Rescue agents] are spawned on SOS dispatch. Helicopter assets travel at 80\,kn; patrol vessels at 25\,kn~\cite{imosar2018}. On arrival at the distress position, surviving crew members transition to \texttt{RESCUED} and the \texttt{survival\_ratio} counter increments (Table~\ref{tab:kpis}, KPI~3). For simplicity, rescue assets are modelled with perfect weather information, no fatigue, and unlimited range and capacity; they are never lost to the environment.
 \end{description}
@@ -125,7 +125,7 @@ This section formalises the communication and information fusion mechanisms that
 
 \subsection{Shore Broadcast and Receive Probability}
 
-Every tick, the coastal station transmits a noisy estimate of the hazard at its location:
+Every tick, each coastal station transmits a noisy estimate of the hazard at its location:
 %
 \begin{equation}
   \hat{W}_\text{shore} = \text{clip}\bigl(W_\text{true} + \epsilon,\,0,\,1\bigr),
@@ -145,7 +145,7 @@ with $\mu_\text{shore} = 0.05$ and $\sigma_\text{shore} = 0.18$ under normal con
 %
 succeeds, where $\kappa_\text{radio} = 10$ controls range fall-off and $w_\text{intf} = 0.8$ models the attenuation of radio signals in heavy weather. $\sigma(\cdot)$ denotes the logistic sigmoid throughout.
 
-Motivation for this model is as follows: the probability of receiving the shore broadcast decreases with distance from the coastal station, reflecting the physical limitations of radio propagation. Additionally, higher local hazard levels further reduce reception probability, simulating the real-world phenomenon where severe weather can interfere with communication signals. This creates a realistic information gradient that the mesh network must navigate to provide timely hazard intelligence to vessels in distress.
+Motivation for this model is as follows: the probability of receiving the shore broadcast decreases with distance from the nearest coastal station, reflecting the physical limitations of radio propagation. Additionally, higher local hazard levels further reduce reception probability, simulating the real-world phenomenon where severe weather can interfere with communication signals. This creates a realistic information gradient that the mesh network must navigate to provide timely hazard intelligence to vessels in distress.
 
 The parameters $\kappa_\text{radio}$ and $w_\text{intf}$ are chosen to produce a realistic reception profile, with a sharp drop-off beyond the 50\,nm range and significant degradation in high-hazard conditions, while still allowing for some successful receptions at the edge of the coverage area under moderate weather. $\mu_\text{shore}$ and $\sigma_\text{shore}$ are set to reflect typical forecast errors observed in coastal weather stations, ensuring that the shore broadcast provides useful but imperfect information that the mesh can enhance.
 
@@ -153,7 +153,7 @@ The parameters $\kappa_\text{radio}$ and $w_\text{intf}$ are chosen to produce a
 
 When the mesh is active (Proposed System only), every vessel periodically broadcasts a structured packet carrying sender identity, current position, observed $W$, observation tick, and a hop counter initialised to zero. A receiving vessel relays the packet onward only if (i)~the hop count is below two, and (ii)~the packet has not been seen in the current tick (duplicate suppression via a per-tick seen-set). With vessel radio ranges of 15\,nm, a two-hop chain bridges up to 45\,nm beyond the coastal horizon — precisely the coverage gap targeted by H3.
 
-SOS packets follow the same relay path with priority pre-emption: on receipt, a vessel immediately re-broadcasts before processing its own weather logic, so SOS propagation latency is bounded to a single 15\,min macro tick regardless of the number of intermediate relays.
+SOS packets follow the same relay path with priority pre-emption: on receipt, a vessel immediately re-broadcasts before processing its own weather logic, so SOS propagation latency is bounded to a single 15\,min macro tick regardless of the number of intermediate relays. Once at shore, the SOS is queued at the receiving station, which becomes the dispatch origin for the corresponding rescue mission.
 
 \subsection{Confidence-Weighted Forecast Fusion}
 
@@ -276,7 +276,7 @@ Whether a life-raft deploys successfully depends on both current weather severit
 with $B_\text{raft} = 0.90$, $\delta_\text{wx} = 0.60$, $\delta_\text{prep} = 0.25$. Once in rafts, crew members remain exposed until rescue arrives. Time-to-Arrival (TTA) is:
 %
 \begin{equation}
-  \text{TTA} = \frac{d_\text{ship,shore}}{v_\text{rescue}}
+  \text{TTA} = \frac{d_\text{ship,dispatch-station}}{v_\text{rescue}}
                + \Delta t_\text{mob},
   \label{eq:tta}
 \end{equation}
@@ -285,14 +285,15 @@ where $v_\text{rescue} = 80$\,kn (helicopter) and $\Delta t_\text{mob} = 2$ tick
 
 Behavior of this model was motivated by the need to capture the critical importance of evacuation timing in determining survival outcomes. By linking the probability of successful raft deployment to both current weather conditions and crew preparedness, the model reflects the real-world challenges faced by mariners in deciding when to abandon ship. The linear decrease in survivor probability with increasing hazard severity underscores the urgency of timely evacuation, creating a direct causal pathway from the quality of weather intelligence (via $E_\text{wx}$) to survival outcomes, which is central to testing H2. The parameters were chosen to produce a realistic range of evacuation success rates and survival probabilities across different scenarios, allowing for meaningful comparisons between the Proposed System and the baselines.
 
-\subsection{Collision Detection}
+\subsection{Collision and Grounding Detection}
 
-Collisions are detected using pairwise circle-overlap checks at a collision
+Ship--ship collisions are detected using pairwise circle-overlap checks at a collision
 radius of $r = 0.15$\,nm, consistent with near-miss studies on vessel
-encounter geometry~\cite{zhang2015}.
-Each intersection increments both vessels' damage counters; damage above
+encounter geometry~\cite{zhang2015}. Each intersection increments both vessels' damage counters; damage above
 the stability threshold causes a transition to \texttt{SUNK} and increments
 the fatality counter (KPI~1, Table~\ref{tab:kpis}).
+
+In addition, land collisions (groundings) are detected by testing vessel motion segments against the land mask each tick. On grounding, the vessel is moved back to its last valid water position (avoidance effect), damage is incremented, and the state transitions to \texttt{EVAC}, initiating the same rescue/SOS workflow as for severe ship incidents. Groundings are logged as intervention events for map playback and KPI accounting.
 
 % ==================================================================
 \section{Experimental Design}

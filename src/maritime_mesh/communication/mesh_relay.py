@@ -5,15 +5,15 @@ from dataclasses import replace
 import numpy as np
 
 from maritime_mesh.communication.packet import MeshPacket, SosPacket
-from maritime_mesh.constants import MAX_HOP_COUNT
 
 
 class MeshRelayProtocol:
     """Hop-limited duplicate-suppressing relay of mesh packets."""
 
-    def __init__(self, rng: np.random.Generator) -> None:
+    def __init__(self, rng: np.random.Generator, max_hop_count: int = 2) -> None:
         """Initialize protocol with RNG and per-tick seen set."""
         self.rng = rng
+        self.max_hop_count = max_hop_count
         self._seen: set[tuple[int, int, str]] = set()
 
     def reset_tick(self) -> None:
@@ -23,7 +23,7 @@ class MeshRelayProtocol:
     def should_relay(self, packet: MeshPacket | SosPacket) -> bool:
         """Return whether packet may be relayed in current tick."""
         signature = (packet.sender_id, packet.tick_sent, packet.__class__.__name__)
-        if packet.hop_count >= MAX_HOP_COUNT or signature in self._seen:
+        if packet.hop_count >= self.max_hop_count or signature in self._seen:
             return False
         self._seen.add(signature)
         return True

@@ -138,7 +138,7 @@ def test_run_from_gui_builds_runner_with_overrides(monkeypatch) -> None:
         green_crew_fraction=0.4,
         shore_noise_std=0.2,
         shore_position=(5.0, 90.0),
-        lane_text="lane_a:0,0;100,100",
+        lane_text="lane_a:15,10;100,100",
     )
 
     assert not result.empty

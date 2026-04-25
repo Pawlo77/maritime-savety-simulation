@@ -48,7 +48,7 @@ class VesselAgent(AbstractMesaAgent):
         position: tuple[float, float],
         speed_kn: float,
         archetype: CrewArchetype,
-        shore_station_position: tuple[float, float],
+        shore_station_positions: tuple[tuple[float, float], ...],
     ) -> None:
         """Initialize vessel with composed behaviour components."""
         super().__init__(model=model, rng=rng)
@@ -65,7 +65,6 @@ class VesselAgent(AbstractMesaAgent):
         self.raft_model = raft_model
         self.survival_model = survival_model
         self.position = position
-        self.shore_station_position = shore_station_position
         self.heading_deg = 0.0
         self.speed_kn = speed_kn
         self.archetype = archetype
@@ -92,23 +91,34 @@ class VesselAgent(AbstractMesaAgent):
         self.last_shore_received = False
         self.last_distance_to_shore = 0.0
         self.last_error_probability = 0.0
+        self.shore_station_positions = shore_station_positions
+        closest_index = self.lane.closest_waypoint_index(self.position)
+        self._target_waypoint_index = self.lane.next_index(closest_index)
 
     def _navigate_lane(self) -> None:
-        """Move vessel toward lane waypoint by one macro-tick step."""
-        waypoint = self.lane.next_waypoint(self.position)
-        dx = waypoint.x_nm - self.position[0]
-        dy = waypoint.y_nm - self.position[1]
-        distance = dist(self.position, (waypoint.x_nm, waypoint.y_nm))
-        if distance == 0.0:
-            return
-        step_nm = self.speed_kn * MACRO_TICK_HOURS
-        move_nm = min(distance, step_nm)
-        angle = atan2(dy, dx)
-        self.heading_deg = (90.0 - np.degrees(angle)) % 360.0
-        self.position = (
-            self.position[0] + (move_nm * cos(radians(90.0 - self.heading_deg))),
-            self.position[1] + (move_nm * sin(radians(90.0 - self.heading_deg))),
-        )
+        """Move vessel along ordered lane waypoints by one macro-tick step."""
+        hazard_slowdown = max(0.3, 1.0 - (0.45 * self.last_true_hazard))
+        remaining_nm = self.speed_kn * hazard_slowdown * MACRO_TICK_HOURS
+        while remaining_nm > 0.0:
+            waypoint = self.lane.waypoint_at(self._target_waypoint_index)
+            dx = waypoint.x_nm - self.position[0]
+            dy = waypoint.y_nm - self.position[1]
+            distance = dist(self.position, (waypoint.x_nm, waypoint.y_nm))
+            if distance == 0.0:
+                self._target_waypoint_index = self.lane.next_index(self._target_waypoint_index)
+                continue
+            move_nm = min(distance, remaining_nm)
+            angle = atan2(dy, dx)
+            self.heading_deg = (90.0 - np.degrees(angle)) % 360.0
+            self.position = (
+                self.position[0] + (move_nm * cos(radians(90.0 - self.heading_deg))),
+                self.position[1] + (move_nm * sin(radians(90.0 - self.heading_deg))),
+            )
+            remaining_nm -= move_nm
+            if move_nm >= distance:
+                self._target_waypoint_index = self.lane.next_index(self._target_waypoint_index)
+            else:
+                break
 
     def _mesh_observations(self, current_tick: int) -> list[tuple[float, int, int]]:
         """Convert inbox packets into confidence-weighter tuples."""
@@ -125,12 +135,25 @@ class VesselAgent(AbstractMesaAgent):
 
         w_true = self.weather_field.hazard_at(*self.position)
         self.last_true_hazard = w_true
-        distance_to_shore = dist(self.position, self.shore_station_position)
+        self.last_error_probability = self.error_prob_model.compute(
+            hours_awake=self.hours_awake,
+            t_utc_hours=self.model.utc_hours,
+            archetype_modifier=self.archetype_modifier,
+        )
+        distance_to_shore = min(
+            dist(self.position, station_position)
+            for station_position in self.shore_station_positions
+        )
         self.last_distance_to_shore = distance_to_shore
         if self.shore_radio.attempt_receive(distance_nm=distance_to_shore, local_hazard=w_true):
-            self.w_hat_shore = self.shore_radio.broadcast(true_hazard=w_true)
-            self.shore_age_ticks = 1
-            self.last_shore_received = True
+            # Human error can cause dropped interpretation even when radio receives.
+            if self.rng.random() >= self.last_error_probability:
+                self.w_hat_shore = self.shore_radio.broadcast(true_hazard=w_true)
+                self.shore_age_ticks = 1
+                self.last_shore_received = True
+            else:
+                self.shore_age_ticks += 1
+                self.last_shore_received = False
         else:
             self.shore_age_ticks += 1
             self.last_shore_received = False
@@ -142,17 +165,14 @@ class VesselAgent(AbstractMesaAgent):
             w_hat_ship, self.w_hat_shore, self.shore_age_ticks
         )
         self.forecast_error = abs(self.w_hat_blend - w_true)
-        self.last_error_probability = self.error_prob_model.compute(
-            hours_awake=self.hours_awake,
-            t_utc_hours=self.model.utc_hours,
-            archetype_modifier=self.archetype_modifier,
-        )
         self.p_prep = self.preparedness_scorer.score(self.forecast_error, self.archetype_modifier)
 
         if self.state == VesselState.ACTIVE:
             evacuate = self.evacuation_policy.should_evacuate(
                 w_hat_blend=self.w_hat_blend, forecast_error=self.forecast_error, p_prep=self.p_prep
             )
+            if evacuate and self.rng.random() < self.last_error_probability:
+                evacuate = False
             if evacuate and self.raft_model.deploy(current_hazard=w_true, p_prep=self.p_prep):
                 self.state = VesselState.EVAC
                 self.has_evacuated = True

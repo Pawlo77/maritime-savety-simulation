@@ -19,28 +19,32 @@ def main() -> None:
     st.set_page_config(page_title="Maritime Mesh Dashboard", layout="wide")
     apply_dashboard_style()
     st.title("Maritime Weather Mesh Simulation")
-    output_dir = Path(st.sidebar.text_input("Output directory", "outputs/maritime_mesh"))
+    output_dir = Path(st.text_input("Output directory", "outputs/maritime_mesh"))
     pages = [
         st.Page(
             lambda: run_experiment.render(output_dir=output_dir),
             title="Run",
             icon=":material/play_arrow:",
+            url_path="run",
             default=True,
         ),
         st.Page(
             lambda: results.render(output_dir=output_dir),
             title="Results",
             icon=":material/insights:",
+            url_path="results",
         ),
         st.Page(
             lambda: map_playback.render(output_dir=output_dir),
             title="Map Playback",
             icon=":material/map:",
+            url_path="map-playback",
         ),
         st.Page(
             lambda: hypothesis.render(output_dir=output_dir),
             title="Hypothesis",
             icon=":material/analytics:",
+            url_path="hypothesis",
         ),
     ]
     nav = st.navigation(pages, position="top")
@@ -67,6 +71,7 @@ def _run_from_gui(
     shore_noise_std: float,
     shore_position: tuple[float, float],
     lane_text: str,
+    shore_positions: tuple[tuple[float, float], ...] | None = None,
 ) -> pd.DataFrame:
     """Backward-compatible run helper accepting raw lane text."""
     scenario_lookup = {
@@ -85,6 +90,7 @@ def _run_from_gui(
             "n_ticks": n_ticks,
             "world_size_nm": world_size_nm,
             "shore_station_position": shore_position,
+            "shore_station_positions": shore_positions or (shore_position,),
             "lane_definitions": parse_lane_definitions(lane_text),
         },
         scenario_overrides={

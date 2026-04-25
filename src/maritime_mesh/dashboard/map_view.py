@@ -14,6 +14,8 @@ def make_timeline_map(run_df: pd.DataFrame) -> go.Figure:
     vessel_df = run_df[run_df["entity_type"] == "vessel"]
     station_df = run_df[run_df["entity_type"] == "coastal_station"]
     rescue_df = run_df[run_df["entity_type"] == "rescue_asset"]
+    event_df = run_df[run_df["entity_type"] == "intervention_event"]
+    land_df = run_df[run_df["entity_type"] == "landmass"]
 
     def _frame_for_tick(tick: int) -> go.Frame:
         """Build one animation frame for a single tick."""
@@ -21,6 +23,16 @@ def make_timeline_map(run_df: pd.DataFrame) -> go.Figure:
         vessel_tick = vessel_df[vessel_df["tick"] == tick]
         station_tick = station_df[station_df["tick"] == tick]
         rescue_tick = rescue_df[rescue_df["tick"] == tick]
+        if "event_kind" in event_df.columns:
+            land_collision_tick = event_df[
+                (event_df["tick"] == tick) & (event_df["event_kind"] == "land_collision")
+            ]
+        else:
+            land_collision_tick = event_df.iloc[0:0]
+        if "source_id" in land_collision_tick.columns:
+            land_collision_custom = land_collision_tick[["source_id"]].fillna("").to_numpy()
+        else:
+            land_collision_custom = []
         return go.Frame(
             name=str(int(tick)),
             data=[
@@ -77,10 +89,10 @@ def make_timeline_map(run_df: pd.DataFrame) -> go.Figure:
                     x=station_tick["x_nm"],
                     y=station_tick["y_nm"],
                     mode="markers+text",
-                    text=["Shore"],
+                    text=[f"Shore {idx + 1}" for idx in range(len(station_tick))],
                     textposition="top center",
                     marker={"size": 14, "symbol": "diamond", "color": "#111"},
-                    name="Coastal Station",
+                    name="Coastal Stations",
                     customdata=station_tick[["shore_broadcast", "hazard", "queued_sos"]]
                     .fillna(0.0)
                     .to_numpy(),
@@ -108,10 +120,38 @@ def make_timeline_map(run_df: pd.DataFrame) -> go.Figure:
                         "mobilisation_left=%{customdata[2]}<extra></extra>"
                     ),
                 ),
+                go.Scatter(
+                    x=land_collision_tick["x_nm"],
+                    y=land_collision_tick["y_nm"],
+                    mode="markers",
+                    marker={"size": 13, "symbol": "triangle-up", "color": "#8b0000"},
+                    name="Land collisions",
+                    customdata=land_collision_custom,
+                    hovertemplate="Grounding vessel=%{customdata[0]}<extra></extra>",
+                ),
             ],
         )
 
     frames = [_frame_for_tick(int(tick)) for tick in ticks]
+    land_shapes = []
+    if not land_df.empty:
+        first_tick = int(ticks[0]) if ticks else 0
+        for _, row in land_df[land_df["tick"] == first_tick].iterrows():
+            land_shapes.append(
+                {
+                    "type": "rect",
+                    "xref": "x",
+                    "yref": "y",
+                    "x0": float(row["x0_nm"]),
+                    "y0": float(row["y0_nm"]),
+                    "x1": float(row["x1_nm"]),
+                    "y1": float(row["y1_nm"]),
+                    "fillcolor": "#6b8e23",
+                    "line": {"color": "#425b15"},
+                    "opacity": 0.45,
+                    "layer": "below",
+                }
+            )
     return go.Figure(
         data=frames[0].data if frames else [],
         frames=frames,
@@ -126,6 +166,7 @@ def make_timeline_map(run_df: pd.DataFrame) -> go.Figure:
             template="plotly_white",
             height=760,
             margin={"l": 25, "r": 25, "t": 40, "b": 30},
+            shapes=land_shapes,
             updatemenus=[
                 {
                     "type": "buttons",

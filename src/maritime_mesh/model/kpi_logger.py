@@ -14,6 +14,7 @@ class KpiLogger:
     def __init__(self) -> None:
         """Initialize record store."""
         self.records: list[dict] = []
+        self.event_records: list[dict] = []
         self._collisions = 0
         self._weather_probe_steps = 12
         self._rescue_tta_hours: list[float] = []
@@ -49,10 +50,12 @@ class KpiLogger:
         self,
         tick: int,
         vessels: list,
-        coastal_station,
+        coastal_stations: list,
         rescue_agents: list,
         relay_links: list[tuple[int, int]],
         collisions: list[tuple[int, int]],
+        land_collisions: list[tuple[int, tuple[float, float]]],
+        land_rectangles: tuple,
         weather_field,
         world_size_nm: float,
         simulation_seed: int,
@@ -88,20 +91,21 @@ class KpiLogger:
                     "simulation_seed": simulation_seed,
                 }
             )
-        self.records.append(
-            {
-                "tick": tick,
-                "entity_type": "coastal_station",
-                "entity_id": coastal_station.unique_id,
-                "x_nm": coastal_station.position[0],
-                "y_nm": coastal_station.position[1],
-                "hazard": weather_field.hazard_at(*coastal_station.position),
-                "shore_broadcast": coastal_station.last_broadcast,
-                "queued_sos": len(coastal_station.sos_queue),
-                "world_size_nm": world_size_nm,
-                "simulation_seed": simulation_seed,
-            }
-        )
+        for coastal_station in coastal_stations:
+            self.records.append(
+                {
+                    "tick": tick,
+                    "entity_type": "coastal_station",
+                    "entity_id": coastal_station.unique_id,
+                    "x_nm": coastal_station.position[0],
+                    "y_nm": coastal_station.position[1],
+                    "hazard": weather_field.hazard_at(*coastal_station.position),
+                    "shore_broadcast": coastal_station.last_broadcast,
+                    "queued_sos": len(coastal_station.sos_queue),
+                    "world_size_nm": world_size_nm,
+                    "simulation_seed": simulation_seed,
+                }
+            )
         for rescue in rescue_agents:
             self.records.append(
                 {
@@ -119,7 +123,7 @@ class KpiLogger:
                 }
             )
         for source_id, target_id in relay_links:
-            self.records.append(
+            self.event_records.append(
                 {
                     "tick": tick,
                     "entity_type": "communication_link",
@@ -131,7 +135,7 @@ class KpiLogger:
                 }
             )
         for vessel_a, vessel_b in collisions:
-            self.records.append(
+            self.event_records.append(
                 {
                     "tick": tick,
                     "entity_type": "intervention_event",
@@ -139,6 +143,34 @@ class KpiLogger:
                     "event_kind": "collision",
                     "source_id": vessel_a,
                     "target_id": vessel_b,
+                    "world_size_nm": world_size_nm,
+                    "simulation_seed": simulation_seed,
+                }
+            )
+        for vessel_id, position in land_collisions:
+            self.event_records.append(
+                {
+                    "tick": tick,
+                    "entity_type": "intervention_event",
+                    "entity_id": f"land_collision_{vessel_id}_{tick}",
+                    "event_kind": "land_collision",
+                    "source_id": vessel_id,
+                    "x_nm": position[0],
+                    "y_nm": position[1],
+                    "world_size_nm": world_size_nm,
+                    "simulation_seed": simulation_seed,
+                }
+            )
+        for idx, land in enumerate(land_rectangles):
+            self.records.append(
+                {
+                    "tick": tick,
+                    "entity_type": "landmass",
+                    "entity_id": f"land_{idx}",
+                    "x0_nm": land.x0,
+                    "y0_nm": land.y0,
+                    "x1_nm": land.x1,
+                    "y1_nm": land.y1,
                     "world_size_nm": world_size_nm,
                     "simulation_seed": simulation_seed,
                 }
@@ -184,7 +216,7 @@ class KpiLogger:
         """Write tick-level records to parquet path."""
         output_path = Path(path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        frame = pd.DataFrame(self.records)
+        frame = pd.DataFrame([*self.records, *self.event_records])
         for column in ("entity_id", "source_id", "target_id"):
             if column in frame.columns:
                 frame[column] = frame[column].astype("string")

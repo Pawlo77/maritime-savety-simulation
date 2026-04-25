@@ -1,5 +1,6 @@
 """Experiment execution driver."""
 
+import json
 from dataclasses import replace
 from pathlib import Path
 
@@ -60,12 +61,45 @@ class ExperimentRunner:
         effective_config = self._apply_overrides(config)
         model = MaritimeModel(effective_config)
         kpis = model.run()
+        self._write_run_manifest(effective_config)
         parquet_path = self.output_dir / (
             f"{effective_config.scenario.name}_{effective_config.method.value}_"
             f"{effective_config.seed}.parquet"
         )
         model.kpi_logger.flush_to_parquet(str(parquet_path))
         return kpis
+
+    def _write_run_manifest(self, config: SimulationConfig) -> None:
+        """Persist effective run configuration for reproducibility."""
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        manifest_path = self.output_dir / (
+            f"{config.scenario.name}_{config.method.value}_{config.seed}.manifest.json"
+        )
+
+        def _serialize(value):
+            if isinstance(value, Path):
+                return str(value)
+            if hasattr(value, "value"):
+                return value.value
+            if isinstance(value, tuple):
+                return [_serialize(item) for item in value]
+            if isinstance(value, list):
+                return [_serialize(item) for item in value]
+            if isinstance(value, dict):
+                return {str(key): _serialize(item) for key, item in value.items()}
+            if hasattr(value, "__dict__"):
+                return {key: _serialize(item) for key, item in value.__dict__.items()}
+            return value
+
+        payload = {
+            "engine": "maritime_mesh",
+            "schema_version": 1,
+            "scenario": config.scenario.name,
+            "method": config.method.value,
+            "seed": config.seed,
+            "effective_config": _serialize(config),
+        }
+        manifest_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
 
     def run_all(self) -> pd.DataFrame:
         """Run all combinations and return KPI dataframe."""
