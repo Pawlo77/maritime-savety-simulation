@@ -30,13 +30,18 @@ def main() -> None:
                 "outputs/maritime_mesh",
                 help=(
                     "Folder containing run artifacts such as summary.csv and per-run parquet logs. "
-                    "Relative paths are resolved from the project root."
+                    "Relative paths are resolved from the project root. "
+                    "Use one experiment family per directory to avoid mixing stale outputs."
                 ),
             )
         )
         summary_file = output_dir / "summary.csv"
         if summary_file.exists():
             st.success(f"Output ready: found `{summary_file}`.")
+            st.caption(
+                "Tip: keep this directory dedicated to one run configuration family "
+                "for cleaner comparisons."
+            )
         else:
             st.info(
                 "No summary file found yet in selected directory. "

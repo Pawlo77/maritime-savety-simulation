@@ -29,6 +29,14 @@ def render(output_dir: Path) -> None:
             "No summary.csv found in the selected output directory. "
             "Run at least one experiment first."
         )
+        info_panel(
+            "Next Best Action",
+            (
+                "1) Verify output directory selection in the sidebar. "
+                "2) Run at least one scenario/method/seed matrix. "
+                "3) Ensure per-run parquet logs are generated."
+            ),
+        )
         return
     page_intro(
         "Simulation Playback",
@@ -65,6 +73,10 @@ def render(output_dir: Path) -> None:
     filtered = results[(results["scenario"] == scenario) & (results["method"].isin(method_filter))]
     if filtered.empty:
         st.info("No rows match current scenario/method filters.")
+        info_panel(
+            "Next Best Action",
+            "Reset playback filters and start with one scenario plus all methods.",
+        )
         return
     selected_method = st.selectbox(
         "Method for playback",
@@ -125,6 +137,19 @@ def render(output_dir: Path) -> None:
             "Re-run experiments with the latest logger to enable playback."
         )
     else:
+        st.markdown(
+            (
+                "<span class='mm-badge mm-badge-success'>"
+                f"Scenario: {display_scenario_name(scenario)}</span>"
+                "<span class='mm-badge mm-badge-success'>"
+                f"Method: {display_method_name(selected_method)}</span>"
+                "<span class='mm-badge mm-badge-warning'>"
+                f"Seed mode: {shortcut_mode}</span>"
+                "<span class='mm-badge mm-badge-warning'>"
+                f"Seed: {selected_seed}</span>"
+            ),
+            unsafe_allow_html=True,
+        )
         col_a, col_b = st.columns(2)
         with col_a:
             show_links = st.toggle("Show active communication links", value=True)

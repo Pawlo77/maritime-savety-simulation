@@ -18,16 +18,45 @@ def parse_lane_definitions(
 ) -> tuple[tuple[str, tuple[tuple[float, float], ...]], ...]:
     """Parse lane definitions from multiline text."""
     lane_definitions = []
-    for raw_line in raw_text.splitlines():
+    example = "lane_alpha: 10,20; 25,40; 70,85"
+    for line_number, raw_line in enumerate(raw_text.splitlines(), start=1):
         line = raw_line.strip()
         if not line:
             continue
+        if ":" not in line:
+            raise ValueError(
+                "Invalid lane format. Each line must look like "
+                f"`{example}` (missing `:` on line {line_number})."
+            )
         lane_name, waypoints_part = line.split(":", maxsplit=1)
+        lane_name = lane_name.strip()
+        if not lane_name:
+            raise ValueError(
+                f"Lane name cannot be empty on line {line_number}. Expected format: `{example}`."
+            )
         waypoints = []
         for point in waypoints_part.split(";"):
-            x_str, y_str = point.strip().split(",", maxsplit=1)
-            waypoints.append((float(x_str), float(y_str)))
-        lane_definitions.append((lane_name.strip(), tuple(waypoints)))
+            cleaned = point.strip()
+            if not cleaned:
+                continue
+            if "," not in cleaned:
+                raise ValueError(
+                    f"Invalid waypoint `{cleaned}` on line {line_number}. "
+                    "Use `x,y` format (example: `12.5,40`)."
+                )
+            x_str, y_str = cleaned.split(",", maxsplit=1)
+            try:
+                waypoints.append((float(x_str), float(y_str)))
+            except ValueError as exc:
+                raise ValueError(
+                    f"Invalid numeric waypoint `{cleaned}` on line {line_number}. "
+                    "Use numbers like `12,40` or `12.5,40.25`."
+                ) from exc
+        if len(waypoints) < 2:
+            raise ValueError(
+                f"Lane `{lane_name}` on line {line_number} needs at least two waypoints."
+            )
+        lane_definitions.append((lane_name, tuple(waypoints)))
     return tuple(lane_definitions)
 
 

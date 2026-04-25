@@ -66,6 +66,41 @@ WEATHER_PRESET_DEFAULTS: dict[str, dict[str, float | int]] = {
         "weather_system_intensity_max": 1.00,
     },
 }
+RUN_COMPLEXITY_PRESETS: dict[str, dict[str, int]] = {
+    "pilot": {"n_seeds": 3, "n_ticks": 80, "n_vessels": 16},
+    "standard": {"n_seeds": 5, "n_ticks": 120, "n_vessels": 25},
+    "stress": {"n_seeds": 12, "n_ticks": 220, "n_vessels": 60},
+}
+
+
+def _render_run_context_badges(
+    selected_scenario_names: list[str],
+    selected_method_values: list[str],
+    n_seeds: int,
+    n_ticks: int,
+    n_vessels: int,
+) -> None:
+    """Render compact run context summary."""
+    total_runs = (
+        max(1, len(selected_scenario_names)) * max(1, len(selected_method_values)) * max(1, n_seeds)
+    )
+    st.markdown(
+        (
+            "<span class='mm-badge mm-badge-success'>"
+            f"Scenarios: {len(selected_scenario_names)}</span>"
+            "<span class='mm-badge mm-badge-success'>"
+            f"Methods: {len(selected_method_values)}</span>"
+            "<span class='mm-badge mm-badge-success'>"
+            f"Seeds: {n_seeds}</span>"
+            "<span class='mm-badge mm-badge-warning'>"
+            f"Ticks/run: {n_ticks}</span>"
+            "<span class='mm-badge mm-badge-warning'>"
+            f"Vessels/run: {n_vessels}</span>"
+            "<span class='mm-badge mm-badge-error'>"
+            f"Estimated runs: {total_runs}</span>"
+        ),
+        unsafe_allow_html=True,
+    )
 
 
 def _default_shore_stations(world_size_nm: float) -> list[tuple[float, float]]:
@@ -612,13 +647,15 @@ def _shore_station_builder(world_size_nm: float) -> tuple[tuple[float, float], .
 
     if st.session_state.shore_station_store:
         st.caption("Configured shore stations")
-        for idx, position in enumerate(st.session_state.shore_station_store):
-            st.markdown(
+        shore_badges = "".join(
+            (
                 "<span class='mm-badge mm-badge-success'>"
                 f"Shore {idx + 1}: ({position[0]:.1f}, {position[1]:.1f})"
-                "</span>",
-                unsafe_allow_html=True,
+                "</span>"
             )
+            for idx, position in enumerate(st.session_state.shore_station_store)
+        )
+        st.markdown(shore_badges, unsafe_allow_html=True)
 
     col_remove_pick, col_remove_action, col_clear = st.columns([2, 1, 1])
     with col_remove_pick:
@@ -670,6 +707,14 @@ def render(output_dir: Path) -> None:
             "Build routes in Lanes, check Preview, and run the matrix."
         ),
     )
+    simple_mode = st.toggle(
+        "Essential controls only",
+        value=True,
+        help=(
+            "Show only the most important controls for a first run. "
+            "Turn off to tune advanced weather and propagation settings."
+        ),
+    )
     (
         tab_basics,
         tab_population,
@@ -685,6 +730,14 @@ def render(output_dir: Path) -> None:
             "Core Simulation Setup",
             "Choose scenarios and methods, then tune run depth and map geometry.",
         )
+        run_preset = st.selectbox(
+            "Quick setup preset",
+            options=["pilot", "standard", "stress", "custom"],
+            index=1,
+            format_func=lambda value: value.capitalize(),
+            help="Preset applies baseline values for seeds, ticks, and vessels.",
+        )
+        preset_values = RUN_COMPLEXITY_PRESETS.get(run_preset, RUN_COMPLEXITY_PRESETS["standard"])
         selected_scenario_names = st.multiselect(
             "Scenarios",
             SCENARIO_CHOICES,
@@ -703,7 +756,7 @@ def render(output_dir: Path) -> None:
             "Number of seeds",
             min_value=1,
             max_value=200,
-            value=5,
+            value=int(preset_values["n_seeds"]),
             step=1,
             help=(
                 "Independent random trials per scenario-method pair. More seeds improve stability."
@@ -713,7 +766,7 @@ def render(output_dir: Path) -> None:
             "Ticks per run",
             min_value=1,
             max_value=2000,
-            value=120,
+            value=int(preset_values["n_ticks"]),
             step=5,
             help=(
                 "Simulation horizon length. Larger values model longer voyages "
@@ -758,7 +811,7 @@ def render(output_dir: Path) -> None:
             "Vessels",
             min_value=1,
             max_value=500,
-            value=25,
+            value=int(preset_values["n_vessels"]),
             step=1,
             help="Number of vessels simulated in each run.",
         )
@@ -910,46 +963,61 @@ def render(output_dir: Path) -> None:
                 weather_shock_scale = st.slider(
                     "Shock scale", min_value=0.0, max_value=1.0, value=0.20
                 )
-            st.markdown("**Innovation and coupling**")
-            col_noise_a, col_noise_b = st.columns(2)
-            with col_noise_a:
-                weather_innovation_scale_sea = st.number_input(
-                    "Sea innovation scale", min_value=0.0, max_value=1.0, value=0.02, step=0.005
-                )
-                weather_innovation_scale_visibility = st.number_input(
-                    "Visibility innovation scale",
-                    min_value=0.0,
-                    max_value=1.0,
-                    value=0.03,
-                    step=0.005,
-                )
-                weather_innovation_scale_wind = st.number_input(
-                    "Wind innovation scale", min_value=0.0, max_value=1.0, value=0.025, step=0.005
-                )
-            with col_noise_b:
-                weather_coupling_sea_wind = st.slider(
-                    "Coupling sea↔wind", min_value=-1.0, max_value=1.0, value=0.35
-                )
-                weather_coupling_sea_visibility = st.slider(
-                    "Coupling sea↔visibility", min_value=-1.0, max_value=1.0, value=-0.20
-                )
-                weather_coupling_wind_visibility = st.slider(
-                    "Coupling wind↔visibility", min_value=-1.0, max_value=1.0, value=-0.25
-                )
-            st.markdown("**Hazard channel weights**")
-            w_col_a, w_col_b, w_col_c = st.columns(3)
-            with w_col_a:
-                weather_weight_sea_state = st.slider(
-                    "Weight: sea state", min_value=0.0, max_value=1.0, value=0.4
-                )
-            with w_col_b:
-                weather_weight_visibility = st.slider(
-                    "Weight: 1-visibility", min_value=0.0, max_value=1.0, value=0.3
-                )
-            with w_col_c:
-                weather_weight_wind = st.slider(
-                    "Weight: wind", min_value=0.0, max_value=1.0, value=0.3
-                )
+            if not simple_mode:
+                st.markdown("**Innovation and coupling**")
+                col_noise_a, col_noise_b = st.columns(2)
+                with col_noise_a:
+                    weather_innovation_scale_sea = st.number_input(
+                        "Sea innovation scale", min_value=0.0, max_value=1.0, value=0.02, step=0.005
+                    )
+                    weather_innovation_scale_visibility = st.number_input(
+                        "Visibility innovation scale",
+                        min_value=0.0,
+                        max_value=1.0,
+                        value=0.03,
+                        step=0.005,
+                    )
+                    weather_innovation_scale_wind = st.number_input(
+                        "Wind innovation scale",
+                        min_value=0.0,
+                        max_value=1.0,
+                        value=0.025,
+                        step=0.005,
+                    )
+                with col_noise_b:
+                    weather_coupling_sea_wind = st.slider(
+                        "Coupling sea↔wind", min_value=-1.0, max_value=1.0, value=0.35
+                    )
+                    weather_coupling_sea_visibility = st.slider(
+                        "Coupling sea↔visibility", min_value=-1.0, max_value=1.0, value=-0.20
+                    )
+                    weather_coupling_wind_visibility = st.slider(
+                        "Coupling wind↔visibility", min_value=-1.0, max_value=1.0, value=-0.25
+                    )
+                st.markdown("**Hazard channel weights**")
+                w_col_a, w_col_b, w_col_c = st.columns(3)
+                with w_col_a:
+                    weather_weight_sea_state = st.slider(
+                        "Weight: sea state", min_value=0.0, max_value=1.0, value=0.4
+                    )
+                with w_col_b:
+                    weather_weight_visibility = st.slider(
+                        "Weight: 1-visibility", min_value=0.0, max_value=1.0, value=0.3
+                    )
+                with w_col_c:
+                    weather_weight_wind = st.slider(
+                        "Weight: wind", min_value=0.0, max_value=1.0, value=0.3
+                    )
+            else:
+                weather_innovation_scale_sea = 0.02
+                weather_innovation_scale_visibility = 0.03
+                weather_innovation_scale_wind = 0.025
+                weather_coupling_sea_wind = 0.35
+                weather_coupling_sea_visibility = -0.20
+                weather_coupling_wind_visibility = -0.25
+                weather_weight_sea_state = 0.4
+                weather_weight_visibility = 0.3
+                weather_weight_wind = 0.3
         if weather_system_radius_min_cells > weather_system_radius_max_cells:
             st.error("Weather radius min must be <= radius max.")
             return
@@ -1037,29 +1105,33 @@ def render(output_dir: Path) -> None:
                     "Higher values degrade communications."
                 ),
             )
-        with st.expander("Advanced propagation tuning", expanded=False):
-            radio_range_falloff = st.number_input(
-                "Shore radio range falloff",
-                min_value=0.01,
-                max_value=200.0,
-                value=float(RADIO_RANGE_FALLOFF),
-                step=0.1,
-                help=(
-                    "How quickly shore signal quality decays with distance. "
-                    "Higher values mean faster degradation."
-                ),
-            )
-            radio_weather_interference = st.number_input(
-                "Weather interference factor",
-                min_value=0.0,
-                max_value=5.0,
-                value=float(RADIO_WEATHER_INTERFERENCE),
-                step=0.05,
-                help=(
-                    "How strongly adverse weather increases transmission failures. "
-                    "0 = no weather impact, larger values = stronger disruption."
-                ),
-            )
+        if not simple_mode:
+            with st.expander("Advanced propagation tuning", expanded=False):
+                radio_range_falloff = st.number_input(
+                    "Shore radio range falloff",
+                    min_value=0.01,
+                    max_value=200.0,
+                    value=float(RADIO_RANGE_FALLOFF),
+                    step=0.1,
+                    help=(
+                        "How quickly shore signal quality decays with distance. "
+                        "Higher values mean faster degradation."
+                    ),
+                )
+                radio_weather_interference = st.number_input(
+                    "Weather interference factor",
+                    min_value=0.0,
+                    max_value=5.0,
+                    value=float(RADIO_WEATHER_INTERFERENCE),
+                    step=0.05,
+                    help=(
+                        "How strongly adverse weather increases transmission failures. "
+                        "0 = no weather impact, larger values = stronger disruption."
+                    ),
+                )
+        else:
+            radio_range_falloff = float(RADIO_RANGE_FALLOFF)
+            radio_weather_interference = float(RADIO_WEATHER_INTERFERENCE)
 
     with tab_preview:
         section_intro(
@@ -1122,6 +1194,80 @@ def render(output_dir: Path) -> None:
         st.plotly_chart(setup_preview, width="stretch")
 
     st.divider()
+    section_intro(
+        "Configuration Readiness",
+        "Confirm estimated workload, core selections, and launch prerequisites before execution.",
+    )
+    _render_run_context_badges(
+        selected_scenario_names=selected_scenario_names,
+        selected_method_values=selected_method_values,
+        n_seeds=int(n_seeds),
+        n_ticks=int(n_ticks),
+        n_vessels=int(n_vessels),
+    )
+    readiness_messages: list[str] = []
+    if not selected_scenario_names:
+        readiness_messages.append("Select at least one scenario in Basics.")
+    if not selected_method_values:
+        readiness_messages.append("Select at least one method in Basics.")
+    if not shore_positions:
+        readiness_messages.append("Add at least one shore station in Shore & Spawn.")
+    if not lane_definitions:
+        readiness_messages.append("Add at least one valid lane in Lanes.")
+    if readiness_messages:
+        st.markdown(
+            "".join(
+                f"<span class='mm-badge mm-badge-warning'>{message}</span>"
+                for message in readiness_messages
+            ),
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown(
+            "<span class='mm-badge mm-badge-success'>Ready to launch experiment matrix</span>",
+            unsafe_allow_html=True,
+        )
+    with st.expander("Effective configuration summary", expanded=False):
+        st.markdown("**Core**")
+        scenarios_label = ", ".join(selected_scenario_names) if selected_scenario_names else "-"
+        methods_label = ", ".join(selected_method_values) if selected_method_values else "-"
+        seeds_ticks_label = (
+            f"- Seeds: `{int(n_seeds)}` | Ticks/run: `{int(n_ticks)}` | "
+            f"Vessels/run: `{int(n_vessels)}`"
+        )
+        world_label = (
+            f"- World size: `{float(world_size_nm):.1f} nm` | "
+            f"Land profile: `{land_profile}` | "
+            f"Clearance: `{float(land_clearance_nm):.1f} nm`"
+        )
+        st.markdown(
+            f"- Preset: `{run_preset}`\n"
+            f"- Scenarios: `{scenarios_label}`\n"
+            f"- Methods: `{methods_label}`\n"
+            f"{seeds_ticks_label}\n"
+            f"{world_label}\n"
+            f"- Shore stations: `{len(shore_positions)}` | Valid lanes: `{len(lane_definitions)}`"
+        )
+        st.markdown("**Overrides and runtime-sensitive settings**")
+        spawn_label = (
+            f"- Spawn annulus: `{float(min_spawn_distance_nm):.1f}` "
+            f"to `{float(max_spawn_distance_nm):.1f} nm`"
+        )
+        radio_label = (
+            f"- Radio: range `{float(vessel_radio_range_nm):.1f} nm`, "
+            f"max hops `{int(max_hop_count)}`, "
+            f"packet loss `{float(radio_packet_loss_rate):.2f}`"
+        )
+        broadcast_label = (
+            f"- Shore broadcast radius: `{float(shore_broadcast_radius_nm):.1f} nm` | "
+            f"falloff `{float(radio_range_falloff):.2f}` | "
+            f"weather interference `{float(radio_weather_interference):.2f}`"
+        )
+        weather_label = (
+            f"- Weather preset: `{weather_preset}` | "
+            f"unpredictability `{float(weather_unpredictability):.2f}`"
+        )
+        st.markdown(f"{spawn_label}\n{radio_label}\n{broadcast_label}\n{weather_label}")
     if st.button("Run Experiment Matrix", type="primary", width="stretch"):
         if not selected_scenario_names:
             st.error("Select at least one scenario in Basics to define the experiment context.")

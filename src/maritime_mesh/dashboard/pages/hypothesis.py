@@ -28,6 +28,14 @@ def render(output_dir: Path) -> None:
             "No summary.csv found in the selected output directory. "
             "Run experiments first to generate comparison data."
         )
+        info_panel(
+            "Next Best Action",
+            (
+                "1) Confirm output directory points to fresh artifacts. "
+                "2) Execute experiment matrix from Run. "
+                "3) Return when summary.csv is available."
+            ),
+        )
         return
     page_intro(
         "Hypothesis Tests",
@@ -55,14 +63,21 @@ def render(output_dir: Path) -> None:
             scenarios,
             default=scenarios,
             format_func=display_scenario_name,
+            key="hypothesis_scenarios",
         )
-        selected_kpis = st.multiselect("KPIs", kpis, default=kpis[: min(2, len(kpis))])
+        selected_kpis = st.multiselect(
+            "KPIs",
+            kpis,
+            default=kpis[: min(2, len(kpis))],
+            key="hypothesis_kpis",
+        )
     with col_b:
         method_a = st.selectbox(
             "Condition A",
             methods,
             index=methods.index("proposed"),
             format_func=display_method_name,
+            key="hypothesis_method_a",
         )
         default_b = "baseline_a" if "baseline_a" in methods else methods[0]
         method_b = st.selectbox(
@@ -70,8 +85,16 @@ def render(output_dir: Path) -> None:
             methods,
             index=methods.index(default_b),
             format_func=display_method_name,
+            key="hypothesis_method_b",
         )
     if st.button("Reset hypothesis filters", width="content"):
+        for key in (
+            "hypothesis_scenarios",
+            "hypothesis_kpis",
+            "hypothesis_method_a",
+            "hypothesis_method_b",
+        ):
+            st.session_state.pop(key, None)
         st.rerun()
     if not selected_scenarios:
         st.info("Select at least one scenario to run comparisons.")
@@ -82,6 +105,17 @@ def render(output_dir: Path) -> None:
     if method_a == method_b:
         st.info("Condition A and Condition B must differ.")
         return
+    st.markdown(
+        (
+            "<span class='mm-badge mm-badge-success'>"
+            f"Scenarios: {len(selected_scenarios)}</span>"
+            "<span class='mm-badge mm-badge-success'>"
+            f"KPIs: {', '.join(selected_kpis)}</span>"
+            "<span class='mm-badge mm-badge-warning'>"
+            f"Pair: {display_method_name(method_a)} vs {display_method_name(method_b)}</span>"
+        ),
+        unsafe_allow_html=True,
+    )
     comparisons = [
         {
             "hypothesis": f"{scenario}:{kpi}:{method_a}_vs_{method_b}",
@@ -96,5 +130,9 @@ def render(output_dir: Path) -> None:
     report = analyser.evaluate_comparisons(comparisons=comparisons, apply_holm_correction=True)
     if report.empty:
         st.info("No valid comparisons for current filters.")
+        info_panel(
+            "Next Best Action",
+            "Choose scenarios/KPIs where both selected methods have completed runs.",
+        )
         return
     render_dataframe(report, width="stretch", hide_index=True)

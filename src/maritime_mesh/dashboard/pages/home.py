@@ -1,5 +1,6 @@
 """Home page for dashboard overview and methodology."""
 
+from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
@@ -226,7 +227,8 @@ def render(output_dir: Path) -> None:
         col_c.metric("Manifests (.json)", len(manifests))
         if summary_exists:
             modified_at = summary_path.stat().st_mtime
-            st.caption(f"summary.csv last modified (epoch): `{modified_at:.0f}`")
+            readable_time = datetime.fromtimestamp(modified_at).strftime("%Y-%m-%d %H:%M:%S")
+            st.caption(f"summary.csv last modified: `{readable_time}` (local time)")
             st.markdown(
                 "<span class='mm-badge mm-badge-success'>Ready for analysis</span>",
                 unsafe_allow_html=True,

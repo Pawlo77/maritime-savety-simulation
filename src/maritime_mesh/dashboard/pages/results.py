@@ -140,6 +140,14 @@ def render(output_dir: Path) -> None:
             "No summary.csv found in the selected output directory. "
             "Run `Run Experiment Matrix` in the Run page first."
         )
+        info_panel(
+            "Next Best Action",
+            (
+                "1) Confirm Output directory points to your latest run artifacts. "
+                "2) Launch at least one scenario-method-seed matrix from Run. "
+                "3) Return here after summary.csv is generated."
+            ),
+        )
         return
     page_intro(
         "Results Overview",
@@ -195,6 +203,10 @@ def render(output_dir: Path) -> None:
     ]
     if filtered.empty:
         st.warning("No rows match current scenario/method filters.")
+        info_panel(
+            "Next Best Action",
+            ("Reset filters, then re-apply gradually: scenario first, methods second, KPIs last."),
+        )
         return
     baseline_method = st.selectbox(
         "Baseline method for deltas/significance",
@@ -233,6 +245,42 @@ def render(output_dir: Path) -> None:
             ["survival_ratio"] if "survival_ratio" in available_kpis else available_kpis[:1]
         )
         st.rerun()
+    active_scenarios_label = ", ".join(display_scenario_name(name) for name in selected_scenarios)
+    active_methods_label = ", ".join(
+        display_method_name(name) for name in sorted(filtered["method"].unique())
+    )
+    focus_label = focus_kpi or "none"
+    st.markdown(
+        (
+            "<span class='mm-badge mm-badge-success'>"
+            f"Active scenarios: {active_scenarios_label}</span>"
+            "<span class='mm-badge mm-badge-success'>"
+            f"Active methods: {active_methods_label}</span>"
+            "<span class='mm-badge mm-badge-warning'>"
+            f"Baseline: {display_method_name(baseline_method)}</span>"
+            "<span class='mm-badge mm-badge-warning'>"
+            f"Focus KPI: {focus_label}</span>"
+        ),
+        unsafe_allow_html=True,
+    )
+    jump_a, jump_b = st.columns(2)
+    with jump_a:
+        if st.button("Open this context in Map Playback", width="stretch"):
+            st.session_state["playback_scenario"] = selected_scenarios[0]
+            st.session_state["playback_method_filter"] = sorted(filtered["method"].unique())
+            st.session_state["playback_method"] = baseline_method
+            if hasattr(st, "switch_page"):
+                st.switch_page("map-playback")
+            else:
+                st.success("Playback context prepared. Open Map Playback tab.")
+    with jump_b:
+        if st.button("Open this context in Hypothesis", width="stretch"):
+            st.session_state["hypothesis_scenarios"] = selected_scenarios
+            st.session_state["hypothesis_method_a"] = baseline_method
+            if hasattr(st, "switch_page"):
+                st.switch_page("hypothesis")
+            else:
+                st.success("Hypothesis context prepared. Open Hypothesis tab.")
 
     tab_overview, tab_explorer, tab_ranking, tab_significance, tab_outliers, tab_means = st.tabs(
         [

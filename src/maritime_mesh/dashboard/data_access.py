@@ -26,7 +26,7 @@ def _read_manifest(manifest_path: Path) -> dict:
         raise ValueError(
             "Result manifest schema mismatch. "
             f"Expected {MANIFEST_SCHEMA_VERSION}, found {schema_version}. "
-            "Re-run experiments with the current version."
+            "Re-run experiments with the current version, or select/clean a fresh output directory."
         )
     return payload
 
@@ -37,7 +37,8 @@ def _validate_summary(summary_df: pd.DataFrame) -> pd.DataFrame:
     if missing:
         raise ValueError(
             "summary.csv is missing required columns: "
-            f"{', '.join(missing)}. Re-run experiments to regenerate outputs."
+            f"{', '.join(missing)}. Re-run experiments to regenerate outputs "
+            "or switch to a clean output directory."
         )
     return summary_df
 
@@ -48,7 +49,8 @@ def _validate_run_log(run_df: pd.DataFrame, run_name: str) -> pd.DataFrame:
     if missing:
         raise ValueError(
             f"{run_name}.parquet is missing required columns: {', '.join(missing)}. "
-            "Re-run experiments with the latest logger."
+            "Re-run experiments with the latest logger or remove stale parquet files "
+            "from this output directory."
         )
     return run_df
 
