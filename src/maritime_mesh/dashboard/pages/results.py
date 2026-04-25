@@ -155,104 +155,150 @@ def render(output_dir: Path) -> None:
         "Baseline method for deltas/significance",
         sorted(filtered["method"].unique()),
     )
-    _render_kpi_cards(filtered)
-    st.dataframe(filtered, use_container_width=True, hide_index=True)
-
-    st.markdown("### KPI Explorer")
     available_kpis = [column for column in KPI_COLUMNS if column in filtered.columns]
     selected_kpis = st.multiselect(
         "KPIs to visualize",
         available_kpis,
         default=["survival_ratio"] if "survival_ratio" in available_kpis else available_kpis[:1],
     )
-    mode = st.radio("Chart mode", ["Single KPI detail", "Compare multiple KPIs"], horizontal=True)
-    if not selected_kpis:
-        st.info("Select at least one KPI.")
-    elif mode == "Single KPI detail":
-        kpi = st.selectbox("KPI", selected_kpis)
-        col_a, col_b = st.columns(2)
-        with col_a:
-            fig_box = px.box(
-                filtered,
-                x="method" if scenario_mode == "Single scenario" else "scenario",
-                y=kpi,
-                color="method",
-                points="all",
-                hover_data=["seed", "scenario"],
-                template="plotly_white",
+    default_focus_kpi = (
+        "survival_ratio"
+        if "survival_ratio" in selected_kpis
+        else selected_kpis[0]
+        if selected_kpis
+        else None
+    )
+    focus_kpi = (
+        st.selectbox("Focus KPI", selected_kpis, index=selected_kpis.index(default_focus_kpi))
+        if selected_kpis
+        else None
+    )
+
+    tab_overview, tab_explorer, tab_ranking, tab_significance, tab_outliers, tab_means = st.tabs(
+        [
+            "Results Overview",
+            "KPI Explorer",
+            "Method Ranking and Uncertainty",
+            "Significance vs Baseline",
+            "Seed Outlier Drill-Down",
+            "Method Means Table",
+        ]
+    )
+
+    with tab_overview:
+        _render_kpi_cards(filtered)
+        st.dataframe(filtered, use_container_width=True, hide_index=True)
+
+    with tab_explorer:
+        if not selected_kpis:
+            st.info("Select at least one KPI.")
+        else:
+            tab_single, tab_multi = st.tabs(["Single KPI detail", "Compare multiple KPIs"])
+            with tab_single:
+                kpi = st.selectbox("KPI", selected_kpis, key="explorer_single_kpi")
+                col_a, col_b = st.columns(2)
+                with col_a:
+                    fig_box = px.box(
+                        filtered,
+                        x="method" if scenario_mode == "Single scenario" else "scenario",
+                        y=kpi,
+                        color="method",
+                        points="all",
+                        hover_data=["seed", "scenario"],
+                        template="plotly_white",
+                    )
+                    fig_box.update_layout(showlegend=False, height=420)
+                    st.plotly_chart(fig_box, use_container_width=True)
+                with col_b:
+                    means = filtered.groupby("method", as_index=False)[kpi].mean()
+                    means = means.sort_values(
+                        kpi, ascending=not KPI_HIGHER_IS_BETTER.get(kpi, True)
+                    )
+                    fig_mean = px.bar(
+                        means,
+                        x="method",
+                        y=kpi,
+                        color="method",
+                        template="plotly_white",
+                        text_auto=".3f",
+                        barmode="group",
+                    )
+                    fig_mean.update_layout(showlegend=False, height=420)
+                    st.plotly_chart(fig_mean, use_container_width=True)
+            with tab_multi:
+                long_df = filtered.melt(
+                    id_vars=["scenario", "method", "seed"],
+                    value_vars=selected_kpis,
+                    var_name="kpi",
+                    value_name="value",
+                )
+                means_long = long_df.groupby(["kpi", "method"], as_index=False)["value"].mean()
+                fig_multi = px.bar(
+                    means_long,
+                    x="method",
+                    y="value",
+                    color="method",
+                    facet_col="kpi",
+                    facet_col_wrap=2,
+                    template="plotly_white",
+                    barmode="group",
+                    text_auto=".3f",
+                )
+                fig_multi.update_layout(showlegend=False, height=700)
+                st.plotly_chart(fig_multi, use_container_width=True)
+
+    with tab_ranking:
+        if not focus_kpi:
+            st.info("Select at least one KPI.")
+        else:
+            ranking_table = _format_confidence_table(
+                filtered=filtered,
+                kpi=focus_kpi,
+                baseline_method=baseline_method,
             )
-            fig_box.update_layout(showlegend=False, height=420)
-            st.plotly_chart(fig_box, use_container_width=True)
-        with col_b:
-            means = filtered.groupby("method", as_index=False)[kpi].mean()
-            means = means.sort_values(kpi, ascending=not KPI_HIGHER_IS_BETTER.get(kpi, True))
-            fig_mean = px.bar(
-                means,
-                x="method",
-                y=kpi,
-                color="method",
-                template="plotly_white",
-                text_auto=".3f",
-                barmode="group",
+            st.dataframe(
+                ranking_table[
+                    [
+                        "rank",
+                        "method",
+                        "n",
+                        "mean",
+                        "std",
+                        "ci95_low",
+                        "ci95_high",
+                        "delta_vs_baseline",
+                        "delta_pct_vs_baseline",
+                    ]
+                ],
+                use_container_width=True,
+                hide_index=True,
             )
-            fig_mean.update_layout(showlegend=False, height=420)
-            st.plotly_chart(fig_mean, use_container_width=True)
-        st.markdown("### Method Ranking and Uncertainty")
-        ranking_table = _format_confidence_table(
-            filtered=filtered, kpi=kpi, baseline_method=baseline_method
-        )
-        st.dataframe(
-            ranking_table[
-                [
-                    "rank",
-                    "method",
-                    "n",
-                    "mean",
-                    "std",
-                    "ci95_low",
-                    "ci95_high",
-                    "delta_vs_baseline",
-                    "delta_pct_vs_baseline",
-                ]
-            ],
-            use_container_width=True,
-            hide_index=True,
-        )
-        if scenario_mode == "Single scenario":
-            st.markdown("### Significance vs Baseline")
+
+    with tab_significance:
+        if scenario_mode != "Single scenario":
+            st.info("Significance view is available in Single scenario mode.")
+        elif not focus_kpi:
+            st.info("Select at least one KPI.")
+        else:
             significance = _significance_badges(
                 filtered=filtered,
                 scenario=selected_scenarios[0],
-                kpi=kpi,
+                kpi=focus_kpi,
                 baseline_method=baseline_method,
             )
             if significance.empty:
                 st.info("No non-baseline methods available for significance testing.")
             else:
                 st.dataframe(significance, use_container_width=True, hide_index=True)
-        _render_seed_outliers(filtered=filtered, kpi=kpi)
-    else:
-        long_df = filtered.melt(
-            id_vars=["scenario", "method", "seed"],
-            value_vars=selected_kpis,
-            var_name="kpi",
-            value_name="value",
-        )
-        means_long = long_df.groupby(["kpi", "method"], as_index=False)["value"].mean()
-        fig_multi = px.bar(
-            means_long,
-            x="method",
-            y="value",
-            color="method",
-            facet_col="kpi",
-            facet_col_wrap=2,
-            template="plotly_white",
-            barmode="group",
-            text_auto=".3f",
-        )
-        fig_multi.update_layout(showlegend=False, height=700)
-        st.plotly_chart(fig_multi, use_container_width=True)
 
-    st.markdown("### Method Means Table")
-    means_table = filtered.groupby(["scenario", "method"], as_index=False)[available_kpis].mean()
-    st.dataframe(means_table, use_container_width=True, hide_index=True)
+    with tab_outliers:
+        if not focus_kpi:
+            st.info("Select at least one KPI.")
+        else:
+            _render_seed_outliers(filtered=filtered, kpi=focus_kpi)
+
+    with tab_means:
+        means_table = filtered.groupby(["scenario", "method"], as_index=False)[
+            available_kpis
+        ].mean()
+        st.dataframe(means_table, use_container_width=True, hide_index=True)
