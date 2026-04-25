@@ -4,6 +4,7 @@ import pandas as pd
 import plotly.graph_objects as go
 
 from maritime_mesh.dashboard.data_access import map_world_size
+from maritime_mesh.dashboard.ui import apply_plotly_theme
 
 
 def _as_numeric_id(value) -> int | None:
@@ -18,6 +19,7 @@ def make_timeline_map(
     run_df: pd.DataFrame,
     show_communication_links: bool = False,
     show_event_markers: bool = True,
+    collision_vessel_linger_ticks: int = 6,
 ) -> go.Figure:
     """Build animated map with weather probes, vessels, and rescue assets."""
     world_size_nm = map_world_size(run_df=run_df)
@@ -29,6 +31,75 @@ def make_timeline_map(
     event_df = run_df[run_df["entity_type"] == "intervention_event"]
     land_df = run_df[run_df["entity_type"] == "landmass"]
     link_df = run_df[run_df["entity_type"] == "communication_link"]
+    if "event_kind" in event_df.columns:
+        collision_events = event_df[event_df["event_kind"] == "collision"].copy()
+        land_collision_events = event_df[event_df["event_kind"] == "land_collision"].copy()
+    else:
+        collision_events = event_df.iloc[0:0].copy()
+        land_collision_events = event_df.iloc[0:0].copy()
+
+    vessel_collisions_long = pd.DataFrame(columns=["vessel_id", "collision_tick"])
+    if not collision_events.empty:
+        source_collisions = collision_events[["source_id", "tick"]].rename(
+            columns={"source_id": "vessel_id", "tick": "collision_tick"}
+        )
+        target_collisions = collision_events[["target_id", "tick"]].rename(
+            columns={"target_id": "vessel_id", "tick": "collision_tick"}
+        )
+        vessel_collisions_long = pd.concat(
+            [source_collisions, target_collisions],
+            ignore_index=True,
+        )
+        vessel_collisions_long["vessel_id"] = pd.to_numeric(
+            vessel_collisions_long["vessel_id"], errors="coerce"
+        )
+        vessel_collisions_long = vessel_collisions_long.dropna(subset=["vessel_id"])
+        vessel_collisions_long["vessel_id"] = vessel_collisions_long["vessel_id"].astype(int)
+        vessel_collisions_long = vessel_collisions_long.groupby("vessel_id", as_index=False)[
+            "collision_tick"
+        ].min()
+
+    if not vessel_collisions_long.empty:
+        vessel_df = vessel_df.copy()
+        vessel_df["vessel_id"] = pd.to_numeric(vessel_df["vessel_id"], errors="coerce")
+        vessel_df = vessel_df.dropna(subset=["vessel_id"])
+        vessel_df["vessel_id"] = vessel_df["vessel_id"].astype(int)
+        vessel_df = vessel_df.merge(vessel_collisions_long, on="vessel_id", how="left")
+        vessel_df = vessel_df[
+            vessel_df["collision_tick"].isna()
+            | (
+                vessel_df["tick"]
+                <= (vessel_df["collision_tick"] + max(0, int(collision_vessel_linger_ticks)))
+            )
+        ]
+
+    collision_markers = pd.DataFrame(columns=["tick", "x_nm", "y_nm", "source_id"])
+    if not collision_events.empty:
+        collision_positions: list[pd.DataFrame] = []
+        for side in ("source_id", "target_id"):
+            side_events = collision_events[["tick", side]].rename(columns={side: "vessel_id"})
+            side_events["vessel_id"] = pd.to_numeric(side_events["vessel_id"], errors="coerce")
+            side_events = side_events.dropna(subset=["vessel_id"])
+            side_events["vessel_id"] = side_events["vessel_id"].astype(int)
+            vessel_positions = vessel_df[["tick", "vessel_id", "x_nm", "y_nm"]]
+            joined = side_events.merge(vessel_positions, on=["tick", "vessel_id"], how="left")
+            joined["source_id"] = joined["vessel_id"]
+            collision_positions.append(joined[["tick", "x_nm", "y_nm", "source_id"]])
+        if collision_positions:
+            collision_markers = pd.concat(collision_positions, ignore_index=True)
+
+    if not land_collision_events.empty:
+        land_collision_markers = land_collision_events[["tick", "x_nm", "y_nm", "source_id"]].copy()
+        collision_markers = pd.concat(
+            [collision_markers, land_collision_markers], ignore_index=True
+        )
+
+    collision_markers = collision_markers.dropna(subset=["x_nm", "y_nm"]).copy()
+    if not collision_markers.empty:
+        collision_markers["source_id"] = pd.to_numeric(
+            collision_markers["source_id"], errors="coerce"
+        ).fillna(-1)
+        collision_markers["source_id"] = collision_markers["source_id"].astype(int)
 
     def _frame_for_tick(tick: int) -> go.Frame:
         """Build one animation frame for a single tick."""
@@ -57,16 +128,16 @@ def make_timeline_map(
                 end = node_lookup[target]
                 link_x.extend([start[0], end[0], None])
                 link_y.extend([start[1], end[1], None])
-        if "event_kind" in event_df.columns:
-            land_collision_tick = event_df[
-                (event_df["tick"] == tick) & (event_df["event_kind"] == "land_collision")
-            ]
-        else:
-            land_collision_tick = event_df.iloc[0:0]
-        if "source_id" in land_collision_tick.columns:
-            land_collision_custom = land_collision_tick[["source_id"]].fillna("").to_numpy()
-        else:
-            land_collision_custom = []
+        collisions_until_tick = (
+            collision_markers[collision_markers["tick"] <= tick]
+            if show_event_markers
+            else collision_markers.iloc[0:0]
+        )
+        collision_custom = (
+            collisions_until_tick[["source_id", "tick"]].to_numpy()
+            if not collisions_until_tick.empty
+            else []
+        )
         return go.Frame(
             name=str(int(tick)),
             data=[
@@ -110,13 +181,13 @@ def make_timeline_map(
                     ].to_numpy(),
                     hovertemplate=(
                         "Vessel %{customdata[0]}<br>"
-                        "state=%{customdata[1]}<br>"
-                        "hazard=%{customdata[2]:.2f}<br>"
-                        "blend=%{customdata[3]:.2f}<br>"
-                        "prep=%{customdata[4]:.2f}<br>"
-                        "mesh_obs=%{customdata[5]}<br>"
-                        "shore_rx=%{customdata[6]}<br>"
-                        "error_prob=%{customdata[7]:.2f}<extra></extra>"
+                        "State: %{customdata[1]}<br>"
+                        "Local hazard score: %{customdata[2]:.2f}<br>"
+                        "Risk blend score: %{customdata[3]:.2f}<br>"
+                        "Preparedness score: %{customdata[4]:.2f}<br>"
+                        "Mesh observations: %{customdata[5]}<br>"
+                        "Shore signal received: %{customdata[6]}<br>"
+                        "Transmission error probability: %{customdata[7]:.2f}<extra></extra>"
                     ),
                 ),
                 go.Scatter(
@@ -132,9 +203,9 @@ def make_timeline_map(
                     .to_numpy(),
                     hovertemplate=(
                         "Station<br>"
-                        "broadcast=%{customdata[0]:.2f}<br>"
-                        "hazard=%{customdata[1]:.2f}<br>"
-                        "queued_sos=%{customdata[2]}<extra></extra>"
+                        "Broadcast strength: %{customdata[0]:.2f}<br>"
+                        "Local hazard score: %{customdata[1]:.2f}<br>"
+                        "Queued SOS reports: %{customdata[2]}<extra></extra>"
                     ),
                 ),
                 go.Scatter(
@@ -150,8 +221,8 @@ def make_timeline_map(
                     .to_numpy(),
                     hovertemplate=(
                         "Rescue %{customdata[0]}<br>"
-                        "type=%{customdata[1]}<br>"
-                        "mobilisation_left=%{customdata[2]}<extra></extra>"
+                        "Asset type: %{customdata[1]}<br>"
+                        "Mobilization ticks remaining: %{customdata[2]}<extra></extra>"
                     ),
                 ),
                 go.Scatter(
@@ -163,22 +234,17 @@ def make_timeline_map(
                     hovertemplate="Communication relay<extra></extra>",
                 ),
                 go.Scatter(
-                    x=land_collision_tick["x_nm"],
-                    y=land_collision_tick["y_nm"],
+                    x=collisions_until_tick["x_nm"],
+                    y=collisions_until_tick["y_nm"],
                     mode="markers",
-                    marker={"size": 13, "symbol": "triangle-up", "color": "#8b0000"},
-                    name="Land collisions",
-                    customdata=land_collision_custom,
-                    hovertemplate="Grounding vessel=%{customdata[0]}<extra></extra>",
-                )
-                if show_event_markers
-                else go.Scatter(
-                    x=[],
-                    y=[],
-                    mode="markers",
-                    name="Land collisions",
-                    marker={"size": 13, "symbol": "triangle-up", "color": "#8b0000"},
-                    hoverinfo="skip",
+                    marker={"size": 12, "symbol": "x", "color": "#8b0000"},
+                    name="Collision points",
+                    customdata=collision_custom,
+                    hovertemplate=(
+                        "Collision marker<br>"
+                        "vessel=%{customdata[0]}<br>"
+                        "first_seen_tick=%{customdata[1]}<extra></extra>"
+                    ),
                 ),
             ],
         )
@@ -223,7 +289,7 @@ def make_timeline_map(
                         "layer": "below",
                     }
                 )
-    return go.Figure(
+    figure = go.Figure(
         data=frames[0].data if frames else [],
         frames=frames,
         layout=go.Layout(
@@ -235,9 +301,7 @@ def make_timeline_map(
                 "scaleratio": 1,
                 "fixedrange": True,
             },
-            template="plotly_white",
             height=760,
-            margin={"l": 25, "r": 25, "t": 40, "b": 30},
             shapes=land_shapes,
             updatemenus=[
                 {
@@ -289,3 +353,4 @@ def make_timeline_map(
             ],
         ),
     )
+    return apply_plotly_theme(figure, height=760)

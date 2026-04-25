@@ -64,7 +64,10 @@ def run_from_gui(
     effective_shores = shore_positions or (shore_position,)
     for position in effective_shores:
         if not land.is_land(position):
-            raise ValueError(f"Shore station {position} must be on land.")
+            raise ValueError(
+                f"Shore station {position} must be on land. "
+                "Move station coordinates onto the green land area in the preview."
+            )
     for lane_name, waypoints in lane_definitions:
         start_point = waypoints[0]
         end_point = waypoints[-1]
@@ -75,7 +78,9 @@ def run_from_gui(
         )
         if not near_start_shore:
             raise ValueError(
-                f"Lane '{lane_name}' must start near shore (<= {route_start_near_shore_nm:.1f} nm)."
+                f"Lane '{lane_name}' must start near shore "
+                f"(<= {route_start_near_shore_nm:.1f} nm). "
+                "Move the first waypoint closer to a shore station."
             )
         near_end_shore = any(
             ((end_point[0] - shore[0]) ** 2 + (end_point[1] - shore[1]) ** 2) ** 0.5
@@ -89,14 +94,20 @@ def run_from_gui(
             or end_point[1] >= world_size_nm - route_end_offmap_margin_nm
         )
         if not (near_end_shore or near_boundary):
-            raise ValueError(f"Lane '{lane_name}' must end near shore or map boundary.")
+            raise ValueError(
+                f"Lane '{lane_name}' must end near shore or map boundary. "
+                "Move the final waypoint near a shore station or close to map edge."
+            )
         for idx in range(len(waypoints) - 1):
             if land.segment_intersects_land(
                 waypoints[idx],
                 waypoints[idx + 1],
                 clearance_nm=land_clearance_nm,
             ):
-                raise ValueError(f"Lane '{lane_name}' intersects land.")
+                raise ValueError(
+                    f"Lane '{lane_name}' intersects land. "
+                    "Add an offshore waypoint to route around the shoreline."
+                )
 
     scenario_lookup = {
         "scenario_1_calm_passage": scenarios.scenario_1_calm_passage,

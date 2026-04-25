@@ -7,8 +7,15 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 
-from maritime_mesh.dashboard.constants import KPI_COLUMNS, KPI_DESCRIPTIONS, KPI_HIGHER_IS_BETTER
+from maritime_mesh.dashboard.constants import (
+    KPI_COLUMNS,
+    KPI_DESCRIPTIONS,
+    KPI_HIGHER_IS_BETTER,
+    display_method_name,
+    display_scenario_name,
+)
 from maritime_mesh.dashboard.data_access import load_summary
+from maritime_mesh.dashboard.ui import apply_plotly_theme, info_panel, page_intro, section_intro
 from maritime_mesh.experiment.analysis import StatisticalAnalyser
 
 
@@ -24,8 +31,8 @@ def _render_kpi_cards(filtered: pd.DataFrame) -> None:
             st.markdown(
                 (
                     "<div class='mm-card'>"
-                    f"<div><b>{kpi}</b></div>"
-                    f"<div style='font-size:1.2rem'>{means[kpi]:.4f}</div>"
+                    f"<div class='mm-card-label'>{kpi}</div>"
+                    f"<div class='mm-card-value'>{means[kpi]:.4f}</div>"
                     f"<div class='mm-muted'>{KPI_DESCRIPTIONS.get(kpi, '')}</div>"
                     "</div>"
                 ),
@@ -97,7 +104,10 @@ def _significance_badges(
 
 def _render_seed_outliers(filtered: pd.DataFrame, kpi: str) -> None:
     """Show top/bottom seeds for quick run-level diagnosis."""
-    st.markdown("### Seed Outlier Drill-Down")
+    section_intro(
+        "Seed Outlier Drill-Down",
+        "Review extreme seeds by method to diagnose instability and edge-case behavior.",
+    )
     top_n = st.slider("Top/Bottom seeds per method", min_value=1, max_value=10, value=3)
     ascending = not KPI_HIGHER_IS_BETTER.get(kpi, True)
     ranked = filtered.sort_values(kpi, ascending=ascending)
@@ -114,27 +124,54 @@ def _render_seed_outliers(filtered: pd.DataFrame, kpi: str) -> None:
 def render(output_dir: Path) -> None:
     """Render results page."""
     try:
-        results = load_summary(output_dir)
+        with st.spinner("Loading summary results..."):
+            results = load_summary(output_dir)
     except ValueError as exc:
         st.error(str(exc))
         return
     if results.empty:
-        st.warning("No summary.csv found. Run experiments first.")
+        st.warning(
+            "No summary.csv found in the selected output directory. "
+            "Run `Run Experiment Matrix` in the Run page first."
+        )
         return
-    st.markdown("### Results Overview")
+    page_intro(
+        "Results Overview",
+        (
+            "Compare methods and scenarios, inspect KPI distributions, "
+            "and validate significance against a baseline."
+        ),
+    )
+    info_panel(
+        "How To Read",
+        (
+            "Use Scenario view and method filters first, then focus on one KPI "
+            "for ranking, significance, and outlier diagnosis."
+        ),
+    )
     scenario_mode = st.radio(
         "Scenario view",
         ["Single scenario", "Side-by-side comparison"],
         horizontal=True,
+        key="results_scenario_mode",
     )
     scenarios = sorted(results["scenario"].unique())
     if scenario_mode == "Single scenario":
-        selected_scenarios = [st.selectbox("Scenario", scenarios)]
+        selected_scenarios = [
+            st.selectbox(
+                "Scenario",
+                scenarios,
+                format_func=display_scenario_name,
+                key="results_single_scenario",
+            )
+        ]
     else:
         selected_scenarios = st.multiselect(
             "Scenarios",
             scenarios,
             default=scenarios[: min(2, len(scenarios))],
+            format_func=display_scenario_name,
+            key="results_multi_scenarios",
         )
         if not selected_scenarios:
             st.info("Select at least one scenario.")
@@ -144,6 +181,8 @@ def render(output_dir: Path) -> None:
         "Methods to display",
         sorted(results["method"].unique()),
         default=sorted(results["method"].unique()),
+        format_func=display_method_name,
+        key="results_method_filter",
     )
     filtered = results[
         (results["scenario"].isin(selected_scenarios)) & (results["method"].isin(method_filter))
@@ -154,12 +193,15 @@ def render(output_dir: Path) -> None:
     baseline_method = st.selectbox(
         "Baseline method for deltas/significance",
         sorted(filtered["method"].unique()),
+        format_func=display_method_name,
+        key="results_baseline_method",
     )
     available_kpis = [column for column in KPI_COLUMNS if column in filtered.columns]
     selected_kpis = st.multiselect(
         "KPIs to visualize",
         available_kpis,
         default=["survival_ratio"] if "survival_ratio" in available_kpis else available_kpis[:1],
+        key="results_selected_kpis",
     )
     default_focus_kpi = (
         "survival_ratio"
@@ -169,10 +211,22 @@ def render(output_dir: Path) -> None:
         else None
     )
     focus_kpi = (
-        st.selectbox("Focus KPI", selected_kpis, index=selected_kpis.index(default_focus_kpi))
+        st.selectbox(
+            "Focus KPI",
+            selected_kpis,
+            index=selected_kpis.index(default_focus_kpi),
+            key="results_focus_kpi",
+        )
         if selected_kpis
         else None
     )
+    if st.button("Reset result filters", use_container_width=False):
+        st.session_state["results_scenario_mode"] = "Single scenario"
+        st.session_state["results_method_filter"] = sorted(results["method"].unique())
+        st.session_state["results_selected_kpis"] = (
+            ["survival_ratio"] if "survival_ratio" in available_kpis else available_kpis[:1]
+        )
+        st.rerun()
 
     tab_overview, tab_explorer, tab_ranking, tab_significance, tab_outliers, tab_means = st.tabs(
         [
@@ -186,6 +240,13 @@ def render(output_dir: Path) -> None:
     )
 
     with tab_overview:
+        section_intro(
+            "Snapshot",
+            (
+                "Top cards show average KPI values for active filters; "
+                "use table below for per-seed details."
+            ),
+        )
         _render_kpi_cards(filtered)
         st.dataframe(filtered, use_container_width=True, hide_index=True)
 
@@ -193,6 +254,10 @@ def render(output_dir: Path) -> None:
         if not selected_kpis:
             st.info("Select at least one KPI.")
         else:
+            section_intro(
+                "Distribution Explorer",
+                "Boxplots show spread/outliers; bars show method means to support quick ranking.",
+            )
             tab_single, tab_multi = st.tabs(["Single KPI detail", "Compare multiple KPIs"])
             with tab_single:
                 kpi = st.selectbox("KPI", selected_kpis, key="explorer_single_kpi")
@@ -205,9 +270,9 @@ def render(output_dir: Path) -> None:
                         color="method",
                         points="all",
                         hover_data=["seed", "scenario"],
-                        template="plotly_white",
                     )
-                    fig_box.update_layout(showlegend=False, height=420)
+                    fig_box.update_layout(showlegend=False)
+                    apply_plotly_theme(fig_box, height=420)
                     st.plotly_chart(fig_box, use_container_width=True)
                 with col_b:
                     means = filtered.groupby("method", as_index=False)[kpi].mean()
@@ -219,11 +284,11 @@ def render(output_dir: Path) -> None:
                         x="method",
                         y=kpi,
                         color="method",
-                        template="plotly_white",
                         text_auto=".3f",
                         barmode="group",
                     )
-                    fig_mean.update_layout(showlegend=False, height=420)
+                    fig_mean.update_layout(showlegend=False)
+                    apply_plotly_theme(fig_mean, height=420)
                     st.plotly_chart(fig_mean, use_container_width=True)
             with tab_multi:
                 long_df = filtered.melt(
@@ -240,17 +305,24 @@ def render(output_dir: Path) -> None:
                     color="method",
                     facet_col="kpi",
                     facet_col_wrap=2,
-                    template="plotly_white",
                     barmode="group",
                     text_auto=".3f",
                 )
-                fig_multi.update_layout(showlegend=False, height=700)
+                fig_multi.update_layout(showlegend=False)
+                apply_plotly_theme(fig_multi, height=700)
                 st.plotly_chart(fig_multi, use_container_width=True)
 
     with tab_ranking:
         if not focus_kpi:
             st.info("Select at least one KPI.")
         else:
+            section_intro(
+                "Method Ranking And Uncertainty",
+                (
+                    "CI95 bounds quantify estimate uncertainty; delta columns "
+                    "compare each method to the baseline."
+                ),
+            )
             ranking_table = _format_confidence_table(
                 filtered=filtered,
                 kpi=focus_kpi,
@@ -280,6 +352,13 @@ def render(output_dir: Path) -> None:
         elif not focus_kpi:
             st.info("Select at least one KPI.")
         else:
+            section_intro(
+                "Significance Vs Baseline",
+                (
+                    "Corrected p-values (< 0.05) indicate statistically significant "
+                    "differences after Holm correction."
+                ),
+            )
             significance = _significance_badges(
                 filtered=filtered,
                 scenario=selected_scenarios[0],
@@ -295,9 +374,20 @@ def render(output_dir: Path) -> None:
         if not focus_kpi:
             st.info("Select at least one KPI.")
         else:
+            section_intro(
+                "Seed-Level Diagnostics",
+                (
+                    "Investigate best/worst seeds to detect instability, "
+                    "anomalous runs, or scenario-specific failure modes."
+                ),
+            )
             _render_seed_outliers(filtered=filtered, kpi=focus_kpi)
 
     with tab_means:
+        section_intro(
+            "Method Means Table",
+            "Compact scenario-method aggregation for reporting and export.",
+        )
         means_table = filtered.groupby(["scenario", "method"], as_index=False)[
             available_kpis
         ].mean()

@@ -14,8 +14,13 @@ from maritime_mesh.constants import (
     WEATHER_GRID_CELLS,
     WORLD_SIZE_NM,
 )
-from maritime_mesh.dashboard.constants import SCENARIO_CHOICES
+from maritime_mesh.dashboard.constants import (
+    SCENARIO_CHOICES,
+    display_method_name,
+    display_scenario_name,
+)
 from maritime_mesh.dashboard.runner import run_from_gui
+from maritime_mesh.dashboard.ui import apply_plotly_theme, info_panel, page_intro, section_intro
 from maritime_mesh.enums import MethodCondition
 from maritime_mesh.weather.weather_field import WeatherField
 from maritime_mesh.world.land import WorldLand
@@ -25,6 +30,91 @@ ROUTE_END_NEAR_SHORE_NM = 60.0
 ROUTE_END_OFFMAP_MARGIN_NM = 12.0
 LaneDefinitions = tuple[tuple[str, tuple[tuple[float, float], ...]], ...]
 LaneEndpointWeights = tuple[tuple[str, tuple[float, float]], ...]
+LAND_PROFILE_LABELS = {
+    "natural_coast": "Natural Coast (recommended)",
+    "legacy_rectangles": "Legacy Rectangles",
+}
+
+
+def _default_shore_stations(world_size_nm: float) -> list[tuple[float, float]]:
+    """Return default shore stations: mainland + corner island."""
+    return [
+        (0.0, world_size_nm * 0.50),
+        (world_size_nm * 0.78, world_size_nm * 0.96),
+    ]
+
+
+def _default_lane_store(world_size_nm: float) -> dict[str, list[tuple[float, float]]]:
+    """Return default lane geometry presets (3 W-E + 2 N-S)."""
+    return {
+        "west_east_southern": [
+            (world_size_nm * 0.18, world_size_nm * 0.16),
+            (world_size_nm * 0.34, world_size_nm * 0.28),
+            (world_size_nm * 0.52, world_size_nm * 0.34),
+            (world_size_nm * 0.70, world_size_nm * 0.32),
+            (world_size_nm * 0.90, world_size_nm * 0.40),
+        ],
+        "west_east_mid_channel": [
+            (world_size_nm * 0.20, world_size_nm * 0.24),
+            (world_size_nm * 0.36, world_size_nm * 0.30),
+            (world_size_nm * 0.52, world_size_nm * 0.34),
+            (world_size_nm * 0.66, world_size_nm * 0.36),
+            (world_size_nm * 0.92, world_size_nm * 0.38),
+        ],
+        "west_east_northern_arc": [
+            (world_size_nm * 0.18, world_size_nm * 0.70),
+            (world_size_nm * 0.36, world_size_nm * 0.74),
+            (world_size_nm * 0.58, world_size_nm * 0.72),
+            (world_size_nm * 0.80, world_size_nm * 0.82),
+            (world_size_nm * 0.94, world_size_nm * 0.86),
+        ],
+        "north_south_west_channel": [
+            (world_size_nm * 0.20, world_size_nm * 0.18),
+            (world_size_nm * 0.28, world_size_nm * 0.30),
+            (world_size_nm * 0.36, world_size_nm * 0.46),
+            (world_size_nm * 0.38, world_size_nm * 0.66),
+            (world_size_nm * 0.42, world_size_nm * 0.90),
+        ],
+        "north_south_central_channel": [
+            (world_size_nm * 0.22, world_size_nm * 0.28),
+            (world_size_nm * 0.30, world_size_nm * 0.40),
+            (world_size_nm * 0.40, world_size_nm * 0.56),
+            (world_size_nm * 0.50, world_size_nm * 0.72),
+            (world_size_nm * 0.62, world_size_nm * 0.90),
+        ],
+    }
+
+
+def _add_bounded_circle(
+    figure: go.Figure,
+    center_x: float,
+    center_y: float,
+    radius_nm: float,
+    line: dict[str, str | int | float],
+    opacity: float,
+    name: str,
+    legendgroup: str,
+    showlegend: bool,
+) -> None:
+    """Draw a circle as a toggleable trace."""
+    if radius_nm <= 0.0:
+        return
+    angles = np.linspace(0.0, 2.0 * np.pi, num=121)
+    xs = center_x + (radius_nm * np.cos(angles))
+    ys = center_y + (radius_nm * np.sin(angles))
+    figure.add_trace(
+        go.Scatter(
+            x=xs,
+            y=ys,
+            mode="lines",
+            line=line,
+            opacity=opacity,
+            name=name,
+            legendgroup=legendgroup,
+            showlegend=showlegend,
+            hoverinfo="skip",
+        )
+    )
 
 
 def _is_near_boundary(point: tuple[float, float], world_size_nm: float, margin_nm: float) -> bool:
@@ -48,7 +138,7 @@ def _make_setup_preview_map(
     land_profile: str,
     land_clearance_nm: float,
 ) -> go.Figure:
-    """Build setup preview map with land, routes, shore, and spawn bounds."""
+    """Build setup preview map with land, routes, shore, and endpoint spawn bounds."""
     figure = go.Figure()
     weather_field = WeatherField(rng=np.random.default_rng(0), world_size_nm=world_size_nm)
     weather_grid = np.array(
@@ -71,10 +161,10 @@ def _make_setup_preview_map(
             x=axis_points,
             y=axis_points,
             z=weather_grid,
-            colorscale="Turbo",
+            colorscale=[(0.0, "#ffffff"), (1.0, "#1f5fbf")],
             zmin=0.0,
             zmax=1.0,
-            opacity=0.28,
+            opacity=0.32,
             name="Weather hazard",
             colorbar={"title": "Hazard"},
             hovertemplate=("Weather<br>x=%{x:.1f}, y=%{y:.1f}<br>hazard=%{z:.2f}<extra></extra>"),
@@ -108,38 +198,57 @@ def _make_setup_preview_map(
                 hoverinfo="skip",
             )
         )
-    # Draw range circles for every shore station.
+    # Draw spawn range circles around route endpoints.
+    spawn_max_legend_shown = False
+    spawn_min_legend_shown = False
+    for points in lane_store.values():
+        if len(points) < 2:
+            continue
+        endpoints = (points[0], points[-1])
+        for endpoint_x, endpoint_y in endpoints:
+            if max_spawn_distance_nm > 0:
+                _add_bounded_circle(
+                    figure=figure,
+                    center_x=endpoint_x,
+                    center_y=endpoint_y,
+                    radius_nm=max_spawn_distance_nm,
+                    line={"color": "#1f77b4", "dash": "dot", "width": 2},
+                    opacity=0.55,
+                    name="Spawn max range",
+                    legendgroup="spawn_max_range",
+                    showlegend=not spawn_max_legend_shown,
+                )
+                spawn_max_legend_shown = True
+            if min_spawn_distance_nm > 0:
+                _add_bounded_circle(
+                    figure=figure,
+                    center_x=endpoint_x,
+                    center_y=endpoint_y,
+                    radius_nm=min_spawn_distance_nm,
+                    line={"color": "#d62728", "dash": "dot", "width": 2},
+                    opacity=0.60,
+                    name="Spawn min range",
+                    legendgroup="spawn_min_range",
+                    showlegend=not spawn_min_legend_shown,
+                )
+                spawn_min_legend_shown = True
+
+    # Draw shore broadcast circles for every shore station.
+    shore_broadcast_legend_shown = False
     for shore_x, shore_y in shore_positions:
-        if max_spawn_distance_nm > 0:
-            figure.add_shape(
-                type="circle",
-                x0=shore_x - max_spawn_distance_nm,
-                y0=shore_y - max_spawn_distance_nm,
-                x1=shore_x + max_spawn_distance_nm,
-                y1=shore_y + max_spawn_distance_nm,
-                line={"color": "#1f77b4", "dash": "dot"},
-                opacity=0.25,
-            )
-        if min_spawn_distance_nm > 0:
-            figure.add_shape(
-                type="circle",
-                x0=shore_x - min_spawn_distance_nm,
-                y0=shore_y - min_spawn_distance_nm,
-                x1=shore_x + min_spawn_distance_nm,
-                y1=shore_y + min_spawn_distance_nm,
-                line={"color": "#d62728", "dash": "dot"},
-                opacity=0.30,
-            )
         if shore_broadcast_radius_nm > 0:
-            figure.add_shape(
-                type="circle",
-                x0=shore_x - shore_broadcast_radius_nm,
-                y0=shore_y - shore_broadcast_radius_nm,
-                x1=shore_x + shore_broadcast_radius_nm,
-                y1=shore_y + shore_broadcast_radius_nm,
-                line={"color": "#17becf", "dash": "dash"},
-                opacity=0.25,
+            _add_bounded_circle(
+                figure=figure,
+                center_x=shore_x,
+                center_y=shore_y,
+                radius_nm=shore_broadcast_radius_nm,
+                line={"color": "#17becf", "dash": "dash", "width": 2},
+                opacity=0.55,
+                name="Shore broadcast range",
+                legendgroup="shore_broadcast_range",
+                showlegend=not shore_broadcast_legend_shown,
             )
+            shore_broadcast_legend_shown = True
     figure.add_trace(
         go.Scatter(
             x=[position[0] for position in shore_positions],
@@ -152,6 +261,7 @@ def _make_setup_preview_map(
             hovertemplate="Shore station<br>x=%{x:.1f}<br>y=%{y:.1f}<extra></extra>",
         )
     )
+    vessel_radio_legend_shown = False
     for lane_name, points in lane_store.items():
         if not points:
             continue
@@ -170,31 +280,53 @@ def _make_setup_preview_map(
         if vessel_radio_range_nm > 0:
             endpoints = (points[0], points[-1])
             for endpoint_x, endpoint_y in endpoints:
-                figure.add_shape(
-                    type="circle",
-                    x0=endpoint_x - vessel_radio_range_nm,
-                    y0=endpoint_y - vessel_radio_range_nm,
-                    x1=endpoint_x + vessel_radio_range_nm,
-                    y1=endpoint_y + vessel_radio_range_nm,
-                    line={"color": "#9467bd", "dash": "dot"},
-                    opacity=0.15,
+                _add_bounded_circle(
+                    figure=figure,
+                    center_x=endpoint_x,
+                    center_y=endpoint_y,
+                    radius_nm=vessel_radio_range_nm,
+                    line={"color": "#9467bd", "dash": "dot", "width": 2},
+                    opacity=0.45,
+                    name="Vessel radio range",
+                    legendgroup="vessel_radio_range",
+                    showlegend=not vessel_radio_legend_shown,
                 )
+                vessel_radio_legend_shown = True
     figure.update_layout(
-        template="plotly_white",
-        title={"text": f"Setup preview (land clearance {land_clearance_nm:.1f} nm)"},
-        xaxis={"range": [0, world_size_nm], "title": "X (nm)", "fixedrange": True},
+        title={
+            "text": f"Setup preview (land clearance {land_clearance_nm:.1f} nm)",
+            "x": 0.0,
+            "xanchor": "left",
+            "y": 0.99,
+        },
+        xaxis={
+            "range": [0, world_size_nm],
+            "autorange": False,
+            "constrain": "domain",
+            "title": "X (nm)",
+            "fixedrange": True,
+        },
         yaxis={
             "range": [0, world_size_nm],
+            "autorange": False,
+            "constrain": "domain",
             "title": "Y (nm)",
             "scaleanchor": "x",
             "scaleratio": 1,
             "fixedrange": True,
         },
-        height=470,
-        margin={"l": 20, "r": 20, "t": 20, "b": 20},
-        legend={"orientation": "h", "yanchor": "bottom", "y": 1.02},
+        height=820,
+        legend={
+            "orientation": "h",
+            "yanchor": "bottom",
+            "y": 1.06,
+            "xanchor": "left",
+            "x": 0.0,
+            "bgcolor": "rgba(255,255,255,0.8)",
+            "groupclick": "togglegroup",
+        },
     )
-    return figure
+    return apply_plotly_theme(figure, height=820)
 
 
 def _lane_builder(
@@ -208,46 +340,15 @@ def _lane_builder(
     if "lane_store" not in st.session_state or st.session_state.get(
         "lane_store_world_size_nm"
     ) != float(world_size_nm):
-        st.session_state.lane_store = {
-            "southern_crossing": [
-                (world_size_nm * 0.18, world_size_nm * 0.16),
-                (world_size_nm * 0.34, world_size_nm * 0.28),
-                (world_size_nm * 0.52, world_size_nm * 0.34),
-                (world_size_nm * 0.70, world_size_nm * 0.32),
-                (world_size_nm * 0.90, world_size_nm * 0.40),
-            ],
-            "mid_channel_crossing": [
-                (world_size_nm * 0.20, world_size_nm * 0.24),
-                (world_size_nm * 0.36, world_size_nm * 0.30),
-                (world_size_nm * 0.52, world_size_nm * 0.34),
-                (world_size_nm * 0.66, world_size_nm * 0.36),
-                (world_size_nm * 0.92, world_size_nm * 0.38),
-            ],
-            "northern_arc": [
-                (world_size_nm * 0.18, world_size_nm * 0.70),
-                (world_size_nm * 0.36, world_size_nm * 0.74),
-                (world_size_nm * 0.58, world_size_nm * 0.72),
-                (world_size_nm * 0.80, world_size_nm * 0.82),
-                (world_size_nm * 0.94, world_size_nm * 0.86),
-            ],
-            "north_south_west": [
-                (world_size_nm * 0.36, world_size_nm * 0.14),
-                (world_size_nm * 0.36, world_size_nm * 0.32),
-                (world_size_nm * 0.38, world_size_nm * 0.50),
-                (world_size_nm * 0.40, world_size_nm * 0.68),
-                (world_size_nm * 0.40, world_size_nm * 0.88),
-            ],
-            "north_south_east": [
-                (world_size_nm * 0.84, world_size_nm * 0.14),
-                (world_size_nm * 0.84, world_size_nm * 0.30),
-                (world_size_nm * 0.84, world_size_nm * 0.48),
-                (world_size_nm * 0.84, world_size_nm * 0.66),
-                (world_size_nm * 0.86, world_size_nm * 0.84),
-            ],
-        }
+        st.session_state.lane_store = _default_lane_store(world_size_nm)
         st.session_state.lane_store_world_size_nm = float(world_size_nm)
-    st.markdown("#### Lane Builder (Map-First)")
-    st.caption("Select a lane, add points with coordinates, and preview the route on the map.")
+    section_intro(
+        "Lane Builder (Map-first)",
+        (
+            "Step 1: choose lane, Step 2: add waypoints, Step 3: ensure at "
+            "least 2 points per lane and valid start/end placement."
+        ),
+    )
     lane_name = st.selectbox("Lane", [*st.session_state.lane_store.keys(), "new_lane"])
     if lane_name == "new_lane":
         new_name = st.text_input("New lane name", value="diagonal")
@@ -256,39 +357,74 @@ def _lane_builder(
             lane_name = new_name
     col_x, col_y, col_add = st.columns([1, 1, 1])
     with col_x:
-        x_nm = st.number_input("X (nm)", min_value=0.0, max_value=world_size_nm, value=0.0)
+        x_nm = st.number_input(
+            "X (nm)",
+            min_value=0.0,
+            max_value=world_size_nm,
+            value=0.0,
+            key="lane_builder_x_nm",
+        )
     with col_y:
-        y_nm = st.number_input("Y (nm)", min_value=0.0, max_value=world_size_nm, value=0.0)
+        y_nm = st.number_input(
+            "Y (nm)",
+            min_value=0.0,
+            max_value=world_size_nm,
+            value=0.0,
+            key="lane_builder_y_nm",
+        )
     with col_add:
         st.write("")
         if st.button("Add point", use_container_width=True):
             new_point = (float(x_nm), float(y_nm))
             lane_points = st.session_state.lane_store.setdefault(lane_name, [])
             if land.distance_to_land(new_point) <= land_clearance_nm:
-                st.error("Waypoint is too close to land/shore clearance zone.")
+                st.error(
+                    "Waypoint is inside the shoreline clearance zone. "
+                    "Move it farther into open water."
+                )
             elif lane_points and land.segment_intersects_land(
                 lane_points[-1],
                 new_point,
                 clearance_nm=land_clearance_nm,
             ):
-                st.error("Segment intersects shoreline clearance zone. Choose safer waypoint.")
+                st.error(
+                    "Segment crosses shoreline clearance. "
+                    "Add an intermediate offshore waypoint and retry."
+                )
             else:
                 lane_points.append(new_point)
-    if st.button("Undo last point", use_container_width=True):
-        points = st.session_state.lane_store.get(lane_name, [])
-        if points:
-            points.pop()
-    col_remove_lane, col_clear_lanes = st.columns(2)
+
+    col_undo, col_remove_lane, col_clear_lanes, col_reset_defaults = st.columns(4)
+    with col_undo:
+        if st.button("Undo last point", use_container_width=True):
+            points = st.session_state.lane_store.get(lane_name, [])
+            if points:
+                points.pop()
+                st.rerun()
     with col_remove_lane:
         if st.button("Remove selected lane", use_container_width=True) and lane_name != "new_lane":
             st.session_state.lane_store.pop(lane_name, None)
+            st.rerun()
     with col_clear_lanes:
         if st.button("Clear all lanes", use_container_width=True):
             st.session_state.lane_store = {}
+            st.rerun()
+    with col_reset_defaults:
+        if st.button("Reset default lanes", use_container_width=True):
+            st.session_state.lane_store = _default_lane_store(world_size_nm)
+            st.rerun()
 
     valid_lanes = []
+    lane_status_lines: list[str] = []
+    lane_issues: list[str] = []
     for name, points in st.session_state.lane_store.items():
+        lane_status = "valid"
         if len(points) < 2:
+            lane_status_lines.append(
+                "<span class='mm-badge mm-badge-warning'>"
+                f"{name}: needs 2+ points (currently {len(points)})"
+                "</span>"
+            )
             continue
         is_valid = True
         for idx in range(len(points) - 1):
@@ -298,6 +434,7 @@ def _lane_builder(
                 clearance_nm=land_clearance_nm,
             ):
                 is_valid = False
+                lane_status = "intersects_land"
                 break
         if is_valid:
             start_point = points[0]
@@ -306,8 +443,9 @@ def _lane_builder(
                 dist(start_point, shore) <= ROUTE_START_NEAR_SHORE_NM for shore in shore_positions
             ):
                 is_valid = False
-                st.warning(
-                    f"Lane '{name}' is ignored because start point is not near shore "
+                lane_status = "start_far_from_shore"
+                lane_issues.append(
+                    f"`{name}`: start point is not near shore "
                     f"(<= {ROUTE_START_NEAR_SHORE_NM:.1f} nm)."
                 )
             elif not (
@@ -315,20 +453,51 @@ def _lane_builder(
                 or _is_near_boundary(end_point, world_size_nm, ROUTE_END_OFFMAP_MARGIN_NM)
             ):
                 is_valid = False
-                st.warning(
-                    f"Lane '{name}' is ignored because end point must be near shore "
-                    f"or <= {ROUTE_END_OFFMAP_MARGIN_NM:.1f} nm from map edge."
+                lane_status = "end_invalid"
+                lane_issues.append(
+                    f"`{name}`: end point must be near shore or "
+                    f"<= {ROUTE_END_OFFMAP_MARGIN_NM:.1f} nm from map edge."
                 )
         if is_valid:
             valid_lanes.append((name, tuple(points)))
+            lane_status_lines.append(
+                "<span class='mm-badge mm-badge-success'>"
+                f"{name}: valid ({len(points)} points)"
+                "</span>"
+            )
         else:
             if len(points) >= 2:
-                st.warning(f"Lane '{name}' is ignored because it intersects land/shore.")
+                if lane_status == "intersects_land":
+                    lane_issues.append(f"`{name}`: intersects land/shore clearance.")
+                if lane_status == "intersects_land":
+                    lane_status_lines.append(
+                        "<span class='mm-badge mm-badge-error'>"
+                        f"{name}: intersects shoreline clearance"
+                        "</span>"
+                    )
+                elif lane_status == "start_far_from_shore":
+                    lane_status_lines.append(
+                        "<span class='mm-badge mm-badge-warning'>"
+                        f"{name}: move start closer to shore station"
+                        "</span>"
+                    )
+                elif lane_status == "end_invalid":
+                    lane_status_lines.append(
+                        "<span class='mm-badge mm-badge-warning'>"
+                        f"{name}: move end near shore or map boundary"
+                        "</span>"
+                    )
+    if lane_issues:
+        st.info("Invalid lanes are excluded from simulation:\n\n- " + "\n- ".join(lane_issues))
+    if lane_status_lines:
+        st.markdown("".join(lane_status_lines), unsafe_allow_html=True)
 
-    st.markdown("#### Spawn Share Per Route Endpoint")
-    st.caption(
-        "Set relative spawn percentages for each route endpoint (start/end). "
-        "Values are normalized automatically; default is equal probability per endpoint."
+    section_intro(
+        "Spawn Share Per Route Endpoint",
+        (
+            "Set relative spawn weights for each route endpoint "
+            "(start/end). Values are normalized automatically."
+        ),
     )
     endpoint_weights: list[tuple[str, tuple[float, float]]] = []
     for lane_name_valid, _ in valid_lanes:
@@ -364,42 +533,91 @@ def _lane_builder(
 def _shore_station_builder(world_size_nm: float) -> tuple[tuple[float, float], ...]:
     """Render controls for creating multiple shore station positions."""
     if "shore_station_store" not in st.session_state:
-        st.session_state.shore_station_store = [
-            (0.0, world_size_nm * 0.25),
-            (0.0, world_size_nm * 0.70),
-        ]
-    st.markdown("#### Shore Stations")
-    st.caption("Add one or more shore stations; rescue assets launch from receiving stations.")
+        st.session_state.shore_station_store = _default_shore_stations(world_size_nm)
+    section_intro(
+        "Shore Stations",
+        "Add one or more shore stations; rescue assets launch from receiving stations.",
+    )
     col_x, col_y, col_add = st.columns([1, 1, 1])
     with col_x:
-        shore_x = st.number_input("Shore X (nm)", value=0.0, step=1.0)
+        shore_x = st.number_input(
+            "Shore X (nm)",
+            value=0.0,
+            step=1.0,
+            key="shore_builder_x_nm",
+        )
     with col_y:
-        shore_y = st.number_input("Shore Y (nm)", value=world_size_nm / 2.0, step=1.0)
+        shore_y = st.number_input(
+            "Shore Y (nm)",
+            value=world_size_nm / 2.0,
+            step=1.0,
+            key="shore_builder_y_nm",
+        )
     with col_add:
         st.write("")
         if st.button("Add shore station", use_container_width=True):
             st.session_state.shore_station_store.append((float(shore_x), float(shore_y)))
-    col_remove, col_clear = st.columns(2)
-    with col_remove:
+
+    if st.session_state.shore_station_store:
+        st.caption("Configured shore stations")
+        for idx, position in enumerate(st.session_state.shore_station_store):
+            st.markdown(
+                "<span class='mm-badge mm-badge-success'>"
+                f"Shore {idx + 1}: ({position[0]:.1f}, {position[1]:.1f})"
+                "</span>",
+                unsafe_allow_html=True,
+            )
+
+    col_remove_pick, col_remove_action, col_clear = st.columns([2, 1, 1])
+    with col_remove_pick:
+        selected = None
         if st.session_state.shore_station_store:
             shore_labels = [
                 f"Shore {idx + 1}: ({position[0]:.1f}, {position[1]:.1f})"
                 for idx, position in enumerate(st.session_state.shore_station_store)
             ]
-            selected = st.selectbox("Remove shore station", shore_labels)
-            if st.button("Remove selected shore", use_container_width=True):
-                selected_idx = shore_labels.index(selected)
-                st.session_state.shore_station_store.pop(selected_idx)
+            selected = st.selectbox(
+                "Select shore station to remove",
+                shore_labels,
+                key="shore_remove_select",
+            )
+    with col_remove_action:
+        st.write("")
+        if (
+            selected is not None
+            and st.button("Remove selected", use_container_width=True)
+            and st.session_state.shore_station_store
+        ):
+            selected_idx = shore_labels.index(selected)
+            st.session_state.shore_station_store.pop(selected_idx)
+            st.rerun()
     with col_clear:
-        if st.button("Clear all shores", use_container_width=True):
-            st.session_state.shore_station_store = []
+        st.write("")
+        if st.button("Reset default shores", use_container_width=True):
+            st.session_state.shore_station_store = _default_shore_stations(world_size_nm)
+            st.rerun()
+
+    if not st.session_state.shore_station_store:
+        st.warning("No shore stations configured. Add at least one station before running.")
     return tuple(st.session_state.shore_station_store)
 
 
 def render(output_dir: Path) -> None:
     """Render run controls and execute experiment matrix."""
-    st.markdown("### Run Experiment")
-    st.markdown("Configure simulation settings and launch runs directly from the GUI.")
+    page_intro(
+        "Run Experiment",
+        (
+            "Configure scenarios, communication settings, and route geometry, "
+            "then launch a full experiment matrix."
+        ),
+    )
+    info_panel(
+        "How To Use",
+        (
+            "Start from Basics, then Population and Shore settings. "
+            "Build routes in Lanes, check Preview, and run the matrix."
+        ),
+    )
     (
         tab_basics,
         tab_population,
@@ -410,29 +628,62 @@ def render(output_dir: Path) -> None:
     ) = st.tabs(["Basics", "Population", "Shore & Spawn", "Lanes", "Comms", "Preview"])
 
     with tab_basics:
+        section_intro(
+            "Core Simulation Setup",
+            "Choose scenarios and methods, then tune run depth and map geometry.",
+        )
         selected_scenario_names = st.multiselect(
             "Scenarios",
             SCENARIO_CHOICES,
             default=SCENARIO_CHOICES[:1],
+            format_func=display_scenario_name,
+            help=("Select one or more weather/navigation contexts to include in this run."),
         )
         selected_method_values = st.multiselect(
             "Methods",
             [condition.value for condition in MethodCondition],
             default=[MethodCondition.PROPOSED.value],
+            format_func=display_method_name,
+            help="Choose decision strategies to compare under the same conditions.",
         )
-        n_seeds = st.number_input("Number of seeds", min_value=1, max_value=200, value=5, step=1)
-        n_ticks = st.number_input("Ticks per run", min_value=1, max_value=2000, value=120, step=5)
+        n_seeds = st.number_input(
+            "Number of seeds",
+            min_value=1,
+            max_value=200,
+            value=5,
+            step=1,
+            help=(
+                "Independent random trials per scenario-method pair. More seeds improve stability."
+            ),
+        )
+        n_ticks = st.number_input(
+            "Ticks per run",
+            min_value=1,
+            max_value=2000,
+            value=120,
+            step=5,
+            help=(
+                "Simulation horizon length. Larger values model longer voyages "
+                "but increase runtime."
+            ),
+        )
         world_size_nm = st.number_input(
             "Map size (nm)",
             min_value=20.0,
             max_value=1000.0,
             value=float(WORLD_SIZE_NM),
             step=10.0,
+            help="Square world side length in nautical miles.",
         )
         land_profile = st.selectbox(
             "Land profile",
             options=["natural_coast", "legacy_rectangles"],
             index=0,
+            format_func=lambda option: LAND_PROFILE_LABELS.get(option, option),
+            help=(
+                "Natural coast adds realistic shoreline geometry; legacy is a "
+                "simpler rectangular approximation."
+            ),
         )
         land_clearance_nm = st.number_input(
             "Land clearance (nm)",
@@ -440,32 +691,68 @@ def render(output_dir: Path) -> None:
             max_value=20.0,
             value=1.0,
             step=0.1,
+            help="Safety buffer around land. Routes and spawn points must stay outside this band.",
         )
         st.session_state.land_profile = land_profile
         st.session_state.land_clearance_nm = float(land_clearance_nm)
 
     with tab_population:
-        n_vessels = st.number_input("Vessels", min_value=1, max_value=500, value=25, step=1)
-        green_crew_fraction = st.slider(
-            "Green crew fraction", min_value=0.0, max_value=1.0, value=0.3
+        section_intro(
+            "Population Risk Profile",
+            "Define fleet size and crew risk characteristics.",
         )
-        shore_noise_std = st.slider("Shore noise std", min_value=0.0, max_value=1.0, value=0.18)
+        n_vessels = st.number_input(
+            "Vessels",
+            min_value=1,
+            max_value=500,
+            value=25,
+            step=1,
+            help="Number of vessels simulated in each run.",
+        )
+        green_crew_fraction = st.slider(
+            "Green crew fraction",
+            min_value=0.0,
+            max_value=1.0,
+            value=0.3,
+            help=(
+                "Fraction of less experienced crew. Higher values typically "
+                "increase operational risk."
+            ),
+        )
+        shore_noise_std = st.slider(
+            "Shore signal noise (std)",
+            min_value=0.0,
+            max_value=1.0,
+            value=0.18,
+            help=(
+                "Uncertainty in shore-side hazard observations. "
+                "Higher values mean noisier shore estimates."
+            ),
+        )
 
     with tab_shore:
-        shore_positions = _shore_station_builder(world_size_nm=world_size_nm)
-        min_spawn_distance_nm = st.number_input(
-            "Min spawn distance from shore (nm)",
-            min_value=0.0,
-            max_value=world_size_nm,
-            value=0.0,
-            step=1.0,
+        section_intro(
+            "Shore Stations And Spawn Radius",
+            (
+                "Place stations on land, then set how far vessel spawn points "
+                "can appear from each route endpoint."
+            ),
         )
-        max_spawn_distance_nm = st.number_input(
-            "Max spawn distance from shore (nm)",
+        shore_positions = _shore_station_builder(world_size_nm=world_size_nm)
+        st.caption(
+            "Spawn annulus is centered on the selected route endpoint; "
+            "sampling is biased toward the outer ring (near max radius)."
+        )
+        min_spawn_distance_nm, max_spawn_distance_nm = st.slider(
+            "Spawn radius range from selected route endpoint (nm)",
             min_value=0.0,
-            max_value=world_size_nm,
-            value=world_size_nm,
+            max_value=float(world_size_nm),
+            value=(0.0, min(5.0, float(world_size_nm))),
             step=1.0,
+            help=(
+                "Choose minimum and maximum spawn radius in one control. "
+                "Values are applied as an annulus around each route endpoint."
+            ),
         )
 
     with tab_lanes:
@@ -475,58 +762,87 @@ def render(output_dir: Path) -> None:
         )
 
     with tab_comms:
-        vessel_radio_range_nm = st.number_input(
-            "Vessel radio range (nm)",
-            min_value=0.1,
-            max_value=500.0,
-            value=float(VESSEL_RADIO_RANGE_NM),
-            step=0.5,
+        section_intro(
+            "Communication Model",
+            "Start with core radio settings; expand advanced tuning only when needed.",
         )
-        max_hop_count = st.number_input(
-            "Mesh max hop count",
-            min_value=0,
-            max_value=10,
-            value=int(MAX_HOP_COUNT),
-            step=1,
-        )
-        shore_broadcast_radius_nm = st.number_input(
-            "Shore broadcast radius (nm)",
-            min_value=0.1,
-            max_value=1000.0,
-            value=float(SHORE_BROADCAST_RADIUS_NM),
-            step=1.0,
-        )
-        radio_range_falloff = st.number_input(
-            "Shore radio range falloff",
-            min_value=0.01,
-            max_value=200.0,
-            value=float(RADIO_RANGE_FALLOFF),
-            step=0.1,
-        )
-        radio_weather_interference = st.number_input(
-            "Weather interference factor",
-            min_value=0.0,
-            max_value=5.0,
-            value=float(RADIO_WEATHER_INTERFERENCE),
-            step=0.05,
-        )
-        radio_packet_loss_rate = st.slider(
-            "Radio packet loss rate",
-            min_value=0.0,
-            max_value=0.5,
-            value=0.02,
-            step=0.01,
-        )
+        col_radio_a, col_radio_b = st.columns(2)
+        with col_radio_a:
+            vessel_radio_range_nm = st.number_input(
+                "Vessel radio range (nm)",
+                min_value=0.1,
+                max_value=500.0,
+                value=float(VESSEL_RADIO_RANGE_NM),
+                step=0.5,
+                help=("Maximum direct vessel-to-vessel communication distance in calm conditions."),
+            )
+            max_hop_count = st.number_input(
+                "Mesh max hop count",
+                min_value=0,
+                max_value=10,
+                value=int(MAX_HOP_COUNT),
+                step=1,
+                help=(
+                    "Maximum relay hops allowed per message. Higher values "
+                    "increase reach but may raise latency."
+                ),
+            )
+        with col_radio_b:
+            shore_broadcast_radius_nm = st.number_input(
+                "Shore broadcast radius (nm)",
+                min_value=0.1,
+                max_value=1000.0,
+                value=float(SHORE_BROADCAST_RADIUS_NM),
+                step=1.0,
+                help="Maximum shore-to-vessel broadcast coverage.",
+            )
+            radio_packet_loss_rate = st.slider(
+                "Radio packet loss rate",
+                min_value=0.0,
+                max_value=0.5,
+                value=0.02,
+                step=0.01,
+                help=(
+                    "Fraction of packets dropped before delivery. "
+                    "Higher values degrade communications."
+                ),
+            )
+        with st.expander("Advanced propagation tuning", expanded=False):
+            radio_range_falloff = st.number_input(
+                "Shore radio range falloff",
+                min_value=0.01,
+                max_value=200.0,
+                value=float(RADIO_RANGE_FALLOFF),
+                step=0.1,
+                help=(
+                    "How quickly shore signal quality decays with distance. "
+                    "Higher values mean faster degradation."
+                ),
+            )
+            radio_weather_interference = st.number_input(
+                "Weather interference factor",
+                min_value=0.0,
+                max_value=5.0,
+                value=float(RADIO_WEATHER_INTERFERENCE),
+                step=0.05,
+                help=(
+                    "How strongly adverse weather increases transmission failures. "
+                    "0 = no weather impact, larger values = stronger disruption."
+                ),
+            )
 
     with tab_preview:
-        st.markdown("#### Full Setup Preview")
-        st.caption(
-            "Preview includes generated land area, shore station, configured routes, "
-            "and spawn-distance zones used for vessel initialization."
+        section_intro(
+            "Full Setup Preview",
+            (
+                "Validate shoreline, station placement, route geometry, and "
+                "spawn rings before launching runs."
+            ),
         )
+        preview_lane_store = {name: list(points) for name, points in lane_definitions}
         setup_preview = _make_setup_preview_map(
             world_size_nm=world_size_nm,
-            lane_store=st.session_state.lane_store,
+            lane_store=preview_lane_store,
             shore_positions=shore_positions,
             min_spawn_distance_nm=float(min_spawn_distance_nm),
             max_spawn_distance_nm=float(max_spawn_distance_nm),
@@ -545,19 +861,19 @@ def render(output_dir: Path) -> None:
     st.divider()
     if st.button("Run Experiment Matrix", type="primary", use_container_width=True):
         if not selected_scenario_names:
-            st.error("Select at least one scenario.")
+            st.error("Select at least one scenario in Basics to define the experiment context.")
             return
         if not selected_method_values:
-            st.error("Select at least one method.")
+            st.error("Select at least one method in Basics so runs can be compared.")
             return
         if not shore_positions:
-            st.error("Add at least one shore station.")
+            st.error("Add at least one shore station in Shore & Spawn and place it on land.")
             return
         if not lane_definitions:
-            st.error("Add at least one lane with two points.")
-            return
-        if min_spawn_distance_nm > max_spawn_distance_nm:
-            st.error("Min spawn distance must be <= max spawn distance.")
+            st.error(
+                "Add at least one valid lane with 2+ points in Lanes; "
+                "ensure it does not cross shoreline clearance."
+            )
             return
         selected_methods = [MethodCondition(value) for value in selected_method_values]
         try:
@@ -591,6 +907,6 @@ def render(output_dir: Path) -> None:
                     lane_endpoint_spawn_weights=lane_endpoint_spawn_weights,
                 )
         except ValueError as exc:
-            st.error(str(exc))
+            st.error(f"{exc} Please adjust lane geometry or shore placement and run again.")
             return
         st.success("Experiment run complete. Navigate to Results pages.")

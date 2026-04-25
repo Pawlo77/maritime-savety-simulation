@@ -311,33 +311,32 @@ class MaritimeModel(Model):
         lane: ShippingLane,
         spawn_from_start: bool,
     ) -> tuple[tuple[float, float], int]:
-        """Draw vessel spawn on a lane segment while respecting world constraints."""
+        """Draw vessel spawn inside endpoint-centered circles with outer-ring bias."""
         min_distance = max(0.0, self.config.scenario.min_spawn_distance_nm)
         max_distance = max(min_distance, self.config.scenario.max_spawn_distance_nm)
+        if max_distance <= 0.0:
+            raise ValueError("Spawn constraints are infeasible: max spawn distance must be > 0.")
         if spawn_from_start:
-            segment_idx = 0
-            start_ratio_min = 0.0
-            start_ratio_max = 0.25
+            spawn_center = (lane.waypoints[0].x_nm, lane.waypoints[0].y_nm)
+            approach_waypoint = 1
         else:
-            segment_idx = len(lane.waypoints) - 2
-            start_ratio_min = 0.75
-            start_ratio_max = 1.0
-        start = (lane.waypoints[segment_idx].x_nm, lane.waypoints[segment_idx].y_nm)
-        end = (lane.waypoints[segment_idx + 1].x_nm, lane.waypoints[segment_idx + 1].y_nm)
-        for _ in range(250):
-            ratio = float(self.rng.uniform(start_ratio_min, start_ratio_max))
-            base = (
-                start[0] + ((end[0] - start[0]) * ratio),
-                start[1] + ((end[1] - start[1]) * ratio),
-            )
-            dx = end[0] - start[0]
-            dy = end[1] - start[1]
-            seg_norm = max(1e-9, dist(start, end))
-            normal = (-dy / seg_norm, dx / seg_norm)
-            offset = float(self.rng.uniform(-0.4, 0.4))
+            spawn_center = (lane.waypoints[-1].x_nm, lane.waypoints[-1].y_nm)
+            approach_waypoint = len(lane.waypoints) - 2
+        approach_point = (
+            lane.waypoints[approach_waypoint].x_nm,
+            lane.waypoints[approach_waypoint].y_nm,
+        )
+        for _ in range(500):
+            angle = float(self.rng.uniform(0.0, 2.0 * np.pi))
+            if max_distance > min_distance:
+                # Bias toward the outer spawn ring while still sampling full area.
+                radial_ratio = float(self.rng.uniform(0.0, 1.0)) ** 0.35
+                radius = min_distance + ((max_distance - min_distance) * radial_ratio)
+            else:
+                radius = min_distance
             candidate = (
-                base[0] + (normal[0] * offset),
-                base[1] + (normal[1] * offset),
+                spawn_center[0] + (radius * np.cos(angle)),
+                spawn_center[1] + (radius * np.sin(angle)),
             )
             in_bounds = (
                 0.0 <= candidate[0] <= self.world_size_nm
@@ -347,17 +346,6 @@ class MaritimeModel(Model):
                 continue
             if self.land.distance_to_land(candidate) <= self.config.land_clearance_nm:
                 continue
-            distance_to_shore = min(
-                dist(candidate, station_position)
-                for station_position in self.shore_station_positions
-            )
-            if not (min_distance <= distance_to_shore <= max_distance):
-                continue
-            approach_waypoint = segment_idx + 1
-            approach_point = (
-                lane.waypoints[approach_waypoint].x_nm,
-                lane.waypoints[approach_waypoint].y_nm,
-            )
             if self.land.segment_intersects_land(
                 candidate,
                 approach_point,
@@ -365,9 +353,7 @@ class MaritimeModel(Model):
             ):
                 continue
             return candidate, approach_waypoint
-        fallback = self._sample_spawn_position()
-        closest_index = lane.closest_waypoint_index(fallback)
-        return fallback, lane.next_index(closest_index)
+        raise ValueError("Spawn constraints are infeasible for endpoint-centered spawn circles.")
 
     def _route_sos_to_station(self, packet: SosPacket) -> tuple[float, float] | None:
         """Attempt SOS delivery to shore stations; return receiver position."""

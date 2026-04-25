@@ -7,9 +7,10 @@ import streamlit as st
 
 from maritime_mesh.dashboard.data_access import can_render_map, load_summary, map_world_size
 from maritime_mesh.dashboard.map_view import make_timeline_map
-from maritime_mesh.dashboard.pages import hypothesis, map_playback, results, run_experiment
+from maritime_mesh.dashboard.pages import home, hypothesis, map_playback, results, run_experiment
 from maritime_mesh.dashboard.runner import parse_lane_definitions
 from maritime_mesh.dashboard.styles import apply_dashboard_style
+from maritime_mesh.dashboard.ui import page_intro
 from maritime_mesh.experiment import scenarios
 from maritime_mesh.experiment.runner import ExperimentRunner
 
@@ -18,15 +19,43 @@ def main() -> None:
     """Render dashboard pages with Streamlit native navigation."""
     st.set_page_config(page_title="Maritime Mesh Dashboard", layout="wide")
     apply_dashboard_style()
-    st.title("Maritime Weather Mesh Simulation")
-    output_dir = Path(st.text_input("Output directory", "outputs/maritime_mesh"))
+    page_intro(
+        "Maritime Weather Mesh Simulation",
+        (
+            "Configure experiments, inspect outcomes, and replay vessel behavior "
+            "with a guided workflow."
+        ),
+    )
+    output_dir = Path(
+        st.text_input(
+            "Output directory",
+            "outputs/maritime_mesh",
+            help=(
+                "Folder containing run artifacts such as summary.csv and per-run parquet logs. "
+                "Relative paths are resolved from the project root."
+            ),
+        )
+    )
+    summary_file = output_dir / "summary.csv"
+    if summary_file.exists():
+        st.success(f"Output ready: found `{summary_file}`.")
+    else:
+        st.info(
+            "No summary file found yet in selected directory. Run experiments to generate outputs."
+        )
     pages = [
+        st.Page(
+            lambda: home.render(output_dir=output_dir),
+            title="Home",
+            icon=":material/home:",
+            url_path="home",
+            default=True,
+        ),
         st.Page(
             lambda: run_experiment.render(output_dir=output_dir),
             title="Run",
             icon=":material/play_arrow:",
             url_path="run",
-            default=True,
         ),
         st.Page(
             lambda: results.render(output_dir=output_dir),

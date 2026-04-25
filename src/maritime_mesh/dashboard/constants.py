@@ -25,6 +25,19 @@ SCENARIO_CHOICES = [
     "scenario_4_deep_water_rescue",
 ]
 
+SCENARIO_LABELS = {
+    "scenario_1_calm_passage": "Scenario 1: Calm Passage",
+    "scenario_2_storm_corridor": "Scenario 2: Storm Corridor",
+    "scenario_3_blind_shore": "Scenario 3: Blind Shore",
+    "scenario_4_deep_water_rescue": "Scenario 4: Deep Water Rescue",
+}
+
+METHOD_LABELS = {
+    "baseline_a": "Baseline A (No mesh relay)",
+    "baseline_b": "Baseline B (Weather-only routing)",
+    "proposed": "Proposed (Adaptive maritime mesh)",
+}
+
 KPI_DESCRIPTIONS = {
     "fatal_per_1k_hrs": "Fatal events per 1,000 ship-hours (lower is better).",
     "collision_per_1k_hrs": "Collision events per 1,000 ship-hours (lower is better).",
@@ -33,3 +46,13 @@ KPI_DESCRIPTIONS = {
     "evac_activation_rate": "Fraction of vessels that entered evacuation mode.",
     "mean_p_prep": "Average preparedness score across all vessels and ticks.",
 }
+
+
+def display_scenario_name(scenario_id: str) -> str:
+    """Return human-readable scenario label."""
+    return SCENARIO_LABELS.get(scenario_id, scenario_id.replace("_", " ").title())
+
+
+def display_method_name(method_id: str) -> str:
+    """Return human-readable method label."""
+    return METHOD_LABELS.get(method_id, method_id.replace("_", " ").title())
