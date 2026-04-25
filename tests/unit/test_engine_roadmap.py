@@ -61,6 +61,44 @@ def test_dispatch_rescue_is_idempotent(default_simulation_config) -> None:
     assert len(model.rescue_agents) == first_count
 
 
+def test_terminal_vessels_are_recycled_to_maintain_population(default_simulation_config) -> None:
+    """Terminal vessel states should be despawned and replaced with fresh vessels."""
+    model = MaritimeModel(default_simulation_config)
+    initial_population = default_simulation_config.scenario.n_vessels
+    original_ids = {vessel.unique_id for vessel in model.vessels}
+
+    model.vessels[0].state = VesselState.SUNK
+    model.vessels[1].state = VesselState.RESCUED
+    removed_ids = {model.vessels[0].unique_id, model.vessels[1].unique_id}
+
+    model._recycle_terminal_vessels()
+
+    assert len(model.vessels) == initial_population
+    assert all(
+        vessel.state not in {VesselState.SUNK, VesselState.RESCUED} for vessel in model.vessels
+    )
+    assert removed_ids.isdisjoint({vessel.unique_id for vessel in model.vessels})
+    assert len({vessel.unique_id for vessel in model.vessels} - original_ids) == len(removed_ids)
+
+
+def test_recycling_keeps_population_stable_for_high_density_runs(default_simulation_config) -> None:
+    """High-density fleets should keep constant population after repeated terminal churn."""
+    dense_scenario = replace(default_simulation_config.scenario, n_vessels=100)
+    dense_config = replace(default_simulation_config, scenario=dense_scenario, n_ticks=64)
+    model = MaritimeModel(dense_config)
+
+    for _ in range(8):
+        for vessel in model.vessels[:10]:
+            vessel.state = VesselState.SUNK
+        for vessel in model.vessels[10:15]:
+            vessel.state = VesselState.RESCUED
+        model.step()
+        assert len(model.vessels) == 100
+        assert all(
+            vessel.state not in {VesselState.SUNK, VesselState.RESCUED} for vessel in model.vessels
+        )
+
+
 def test_phased_scheduler_orders_shore_before_vessel(default_simulation_config) -> None:
     """Phased scheduler should execute shore phase before vessel phase."""
     config = replace(default_simulation_config, scheduler_mode="phased")

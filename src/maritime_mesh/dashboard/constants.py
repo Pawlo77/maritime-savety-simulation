@@ -33,8 +33,8 @@ SCENARIO_LABELS = {
 }
 
 METHOD_LABELS = {
-    "baseline_a": "Baseline A (No mesh relay)",
-    "baseline_b": "Baseline B (Weather-only routing)",
+    "baseline_a": "Baseline A (Classical: no weather fusion, no adaptive prep)",
+    "baseline_b": "Baseline B (Shore-only: no mesh relay)",
     "proposed": "Proposed (Adaptive maritime mesh)",
 }
 

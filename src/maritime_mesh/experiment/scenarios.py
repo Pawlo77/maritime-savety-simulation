@@ -17,7 +17,7 @@ def _make_config(
         scenario=scenario,
         method=method,
         seed=seed,
-        n_ticks=120,
+        n_ticks=2880,
         mesh_enabled=method == MethodCondition.PROPOSED,
         evacuation_enabled=method != MethodCondition.BASELINE_A,
         human_factors_enabled=method != MethodCondition.BASELINE_A,

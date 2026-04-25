@@ -119,7 +119,7 @@ class MaritimeModel(Model):
             ]
         return [
             ShippingLane(
-                "southern_crossing",
+                "west_east_southern",
                 [
                     Waypoint(self.world_size_nm * 0.18, self.world_size_nm * 0.16),
                     Waypoint(self.world_size_nm * 0.34, self.world_size_nm * 0.28),
@@ -129,7 +129,7 @@ class MaritimeModel(Model):
                 ],
             ),
             ShippingLane(
-                "mid_channel_crossing",
+                "west_east_mid_channel",
                 [
                     Waypoint(self.world_size_nm * 0.20, self.world_size_nm * 0.24),
                     Waypoint(self.world_size_nm * 0.36, self.world_size_nm * 0.30),
@@ -139,7 +139,7 @@ class MaritimeModel(Model):
                 ],
             ),
             ShippingLane(
-                "northern_arc",
+                "west_east_northern_arc",
                 [
                     Waypoint(self.world_size_nm * 0.18, self.world_size_nm * 0.70),
                     Waypoint(self.world_size_nm * 0.36, self.world_size_nm * 0.74),
@@ -149,23 +149,23 @@ class MaritimeModel(Model):
                 ],
             ),
             ShippingLane(
-                "north_south_west",
+                "north_south_west_channel",
                 [
-                    Waypoint(self.world_size_nm * 0.36, self.world_size_nm * 0.14),
-                    Waypoint(self.world_size_nm * 0.36, self.world_size_nm * 0.32),
-                    Waypoint(self.world_size_nm * 0.38, self.world_size_nm * 0.50),
-                    Waypoint(self.world_size_nm * 0.40, self.world_size_nm * 0.68),
-                    Waypoint(self.world_size_nm * 0.40, self.world_size_nm * 0.88),
+                    Waypoint(self.world_size_nm * 0.20, self.world_size_nm * 0.18),
+                    Waypoint(self.world_size_nm * 0.28, self.world_size_nm * 0.30),
+                    Waypoint(self.world_size_nm * 0.36, self.world_size_nm * 0.46),
+                    Waypoint(self.world_size_nm * 0.38, self.world_size_nm * 0.66),
+                    Waypoint(self.world_size_nm * 0.42, self.world_size_nm * 0.90),
                 ],
             ),
             ShippingLane(
-                "north_south_east",
+                "north_south_central_channel",
                 [
-                    Waypoint(self.world_size_nm * 0.84, self.world_size_nm * 0.14),
-                    Waypoint(self.world_size_nm * 0.84, self.world_size_nm * 0.30),
-                    Waypoint(self.world_size_nm * 0.84, self.world_size_nm * 0.48),
-                    Waypoint(self.world_size_nm * 0.84, self.world_size_nm * 0.66),
-                    Waypoint(self.world_size_nm * 0.86, self.world_size_nm * 0.84),
+                    Waypoint(self.world_size_nm * 0.22, self.world_size_nm * 0.28),
+                    Waypoint(self.world_size_nm * 0.30, self.world_size_nm * 0.40),
+                    Waypoint(self.world_size_nm * 0.40, self.world_size_nm * 0.56),
+                    Waypoint(self.world_size_nm * 0.50, self.world_size_nm * 0.72),
+                    Waypoint(self.world_size_nm * 0.62, self.world_size_nm * 0.90),
                 ],
             ),
         ]
@@ -248,56 +248,80 @@ class MaritimeModel(Model):
         self.coastal_station = self.coastal_stations[0]
 
         for _ in range(self.config.scenario.n_vessels):
-            lane, spawn_from_start = self._sample_lane_endpoint()
-            archetype = (
-                CrewArchetype.GREEN
-                if self.rng.random() < self.config.scenario.green_crew_fraction
-                else CrewArchetype.STANDARD
-            )
-            if self.rng.random() < 0.1:
-                archetype = CrewArchetype.VETERAN
-            preparedness = (
-                PreparednessScorer(fixed_value=0.0)
-                if self.config.method == MethodCondition.BASELINE_A
-                else PreparednessScorer()
-            )
-            fuser = (
-                ForecastFuser(trust_decay=ShoreTrustDecay(decay_k=1e-9))
-                if self.config.method == MethodCondition.BASELINE_B
-                else ForecastFuser()
-            )
-            spawn_position, initial_target_index = self._sample_spawn_on_lane(
-                lane=lane,
-                spawn_from_start=spawn_from_start,
-            )
-            vessel = VesselAgent(
-                model=self,
-                unique_id=self._new_id(),
-                rng=self.rng,
-                weather_field=self.weather_field,
-                lane=lane,
-                shore_radio=self.coastal_station.shore_radio,
-                mesh_relay=MeshRelayProtocol(self.rng, max_hop_count=self.config.max_hop_count),
-                confidence_weighter=ConfidenceWeighter(),
-                forecast_fuser=fuser,
-                error_prob_model=ErrorProbabilityModel(enabled=self.config.human_factors_enabled),
-                preparedness_scorer=preparedness,
-                evacuation_policy=EvacuationPolicy(
-                    rng=self.rng, enabled=self.config.evacuation_enabled
-                ),
-                raft_model=RaftDeploymentModel(rng=self.rng),
-                survival_model=SurvivalModel(rng=self.rng),
-                position=spawn_position,
-                speed_kn=float(self.rng.uniform(10.0, 20.0)),
-                archetype=archetype,
-                shore_station_positions=self.shore_station_positions,
-                initial_target_waypoint_index=initial_target_index,
-            )
-            self.vessels.append(vessel)
+            self._spawn_vessel()
+
+    def _spawn_vessel(self) -> VesselAgent:
+        """Create one vessel agent and register it in model state and scheduler."""
+        lane, spawn_from_start = self._sample_lane_endpoint()
+        archetype = (
+            CrewArchetype.GREEN
+            if self.rng.random() < self.config.scenario.green_crew_fraction
+            else CrewArchetype.STANDARD
+        )
+        if self.rng.random() < 0.1:
+            archetype = CrewArchetype.VETERAN
+        preparedness = (
+            PreparednessScorer(fixed_value=0.0)
+            if self.config.method == MethodCondition.BASELINE_A
+            else PreparednessScorer()
+        )
+        fuser = (
+            ForecastFuser(trust_decay=ShoreTrustDecay(decay_k=1e-9))
+            if self.config.method == MethodCondition.BASELINE_B
+            else ForecastFuser()
+        )
+        spawn_position, initial_target_index = self._sample_spawn_on_lane(
+            lane=lane,
+            spawn_from_start=spawn_from_start,
+        )
+        vessel = VesselAgent(
+            model=self,
+            unique_id=self._new_id(),
+            rng=self.rng,
+            weather_field=self.weather_field,
+            lane=lane,
+            shore_radio=self.coastal_station.shore_radio,
+            mesh_relay=MeshRelayProtocol(self.rng, max_hop_count=self.config.max_hop_count),
+            confidence_weighter=ConfidenceWeighter(),
+            forecast_fuser=fuser,
+            error_prob_model=ErrorProbabilityModel(enabled=self.config.human_factors_enabled),
+            preparedness_scorer=preparedness,
+            evacuation_policy=EvacuationPolicy(
+                rng=self.rng, enabled=self.config.evacuation_enabled
+            ),
+            raft_model=RaftDeploymentModel(rng=self.rng),
+            survival_model=SurvivalModel(rng=self.rng),
+            position=spawn_position,
+            speed_kn=float(self.rng.uniform(10.0, 20.0)),
+            archetype=archetype,
+            shore_station_positions=self.shore_station_positions,
+            initial_target_waypoint_index=initial_target_index,
+        )
+        self.vessels.append(vessel)
+        if isinstance(self.scheduler, PhaseScheduler):
+            self.scheduler.add("vessel", vessel)
+        else:
+            self.scheduler.add(vessel)
+        return vessel
+
+    def _recycle_terminal_vessels(self) -> None:
+        """Despawn terminal vessels and spawn replacements to keep population constant."""
+        terminal_states = {VesselState.SUNK, VesselState.RESCUED}
+        terminal_vessels = [vessel for vessel in self.vessels if vessel.state in terminal_states]
+        if not terminal_vessels:
+            return
+        for vessel in terminal_vessels:
             if isinstance(self.scheduler, PhaseScheduler):
-                self.scheduler.add("vessel", vessel)
+                self.scheduler.remove("vessel", vessel)
             else:
-                self.scheduler.add(vessel)
+                self.scheduler.remove(vessel)
+            self._active_rescue_by_vessel.pop(vessel.unique_id, None)
+            self._sos_dispatch_tick_by_vessel.pop(vessel.unique_id, None)
+            self._sos_dispatch_station_by_vessel.pop(vessel.unique_id, None)
+            self._recorded_rescue_vessels.discard(vessel.unique_id)
+        self.vessels = [vessel for vessel in self.vessels if vessel.state not in terminal_states]
+        for _ in range(len(terminal_vessels)):
+            self._spawn_vessel()
 
     def _sample_spawn_position(self) -> tuple[float, float]:
         """Draw vessel spawn position satisfying scenario shore-distance constraints."""
@@ -615,6 +639,7 @@ class MaritimeModel(Model):
             world_size_nm=self.world_size_nm,
             simulation_seed=self.config.seed,
         )
+        self._recycle_terminal_vessels()
         self.tick += 1
         self.utc_hours += MACRO_TICK_HOURS
 

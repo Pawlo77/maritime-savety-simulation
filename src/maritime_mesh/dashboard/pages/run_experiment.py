@@ -68,8 +68,8 @@ WEATHER_PRESET_DEFAULTS: dict[str, dict[str, float | int]] = {
 }
 RUN_COMPLEXITY_PRESETS: dict[str, dict[str, int]] = {
     "pilot": {"n_seeds": 3, "n_ticks": 80, "n_vessels": 16},
-    "standard": {"n_seeds": 5, "n_ticks": 120, "n_vessels": 25},
-    "stress": {"n_seeds": 12, "n_ticks": 220, "n_vessels": 60},
+    "standard": {"n_seeds": 30, "n_ticks": 120, "n_vessels": 25},
+    "stress": {"n_seeds": 12, "n_ticks": 2880, "n_vessels": 100},
 }
 
 
@@ -733,7 +733,7 @@ def render(output_dir: Path) -> None:
         run_preset = st.selectbox(
             "Quick setup preset",
             options=["pilot", "standard", "stress", "custom"],
-            index=1,
+            index=2,
             format_func=lambda value: value.capitalize(),
             help="Preset applies baseline values for seeds, ticks, and vessels.",
         )
@@ -762,10 +762,15 @@ def render(output_dir: Path) -> None:
                 "Independent random trials per scenario-method pair. More seeds improve stability."
             ),
         )
+        if int(n_seeds) < 30:
+            st.info(
+                "Paper-aligned statistical runs use 30 seeds. "
+                "Lower values are fine for quick exploration."
+            )
         n_ticks = st.number_input(
             "Ticks per run",
             min_value=1,
-            max_value=2000,
+            max_value=10000,
             value=int(preset_values["n_ticks"]),
             step=5,
             help=(

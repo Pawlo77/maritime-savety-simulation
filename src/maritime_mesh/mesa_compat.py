@@ -39,6 +39,11 @@ class RandomActivation:
         """Register an agent in the scheduler."""
         self.agents.append(agent)
 
+    def remove(self, agent: Stepable) -> None:
+        """Unregister an agent if present."""
+        if agent in self.agents:
+            self.agents.remove(agent)
+
     def step(self) -> None:
         """Step all registered agents once."""
         for agent in list(self.agents):
@@ -62,6 +67,13 @@ class PhaseScheduler:
         if phase not in self._phase_agents:
             raise ValueError(f"Unknown scheduler phase '{phase}'.")
         self._phase_agents[phase].append(agent)
+
+    def remove(self, phase: str, agent: Stepable) -> None:
+        """Unregister an agent from a named phase if present."""
+        if phase not in self._phase_agents:
+            raise ValueError(f"Unknown scheduler phase '{phase}'.")
+        if agent in self._phase_agents[phase]:
+            self._phase_agents[phase].remove(agent)
 
     def step(self) -> None:
         """Step all agents according to phase order."""

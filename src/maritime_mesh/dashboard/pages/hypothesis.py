@@ -14,6 +14,11 @@ from maritime_mesh.dashboard.ui import info_panel, page_intro, render_dataframe
 from maritime_mesh.enums import MethodCondition
 from maritime_mesh.experiment.analysis import StatisticalAnalyser
 
+_HYPOTHESIS_THRESHOLDS: dict[tuple[str, str, str, str], tuple[float, bool]] = {
+    ("scenario_2_storm_corridor", "fatal_per_1k_hrs", "proposed", "baseline_a"): (20.0, False),
+    ("scenario_4_deep_water_rescue", "survival_ratio", "proposed", "baseline_a"): (15.0, True),
+}
+
 
 def render(output_dir: Path) -> None:
     """Render hypothesis-testing table."""
@@ -45,7 +50,9 @@ def render(output_dir: Path) -> None:
         "Interpretation Guide",
         (
             "Lower corrected p-values indicate stronger evidence. "
-            "Confirmed comparisons usually mean corrected p-value < 0.05."
+            "Confirmed comparisons require corrected p-value < 0.05 and, "
+            "for non-survival KPIs, |Cliff's delta| > 0.2. "
+            "When a minimum improvement threshold is configured, it must also be met."
         ),
     )
     analyser = StatisticalAnalyser(results_df=results)
@@ -116,17 +123,21 @@ def render(output_dir: Path) -> None:
         ),
         unsafe_allow_html=True,
     )
-    comparisons = [
-        {
-            "hypothesis": f"{scenario}:{kpi}:{method_a}_vs_{method_b}",
-            "scenario": scenario,
-            "kpi": kpi,
-            "condition_a": method_a,
-            "condition_b": method_b,
-        }
-        for scenario in selected_scenarios
-        for kpi in selected_kpis
-    ]
+    comparisons = []
+    for scenario in selected_scenarios:
+        for kpi in selected_kpis:
+            comparison = {
+                "hypothesis": f"{scenario}:{kpi}:{method_a}_vs_{method_b}",
+                "scenario": scenario,
+                "kpi": kpi,
+                "condition_a": method_a,
+                "condition_b": method_b,
+            }
+            threshold = _HYPOTHESIS_THRESHOLDS.get((scenario, kpi, method_a, method_b))
+            if threshold is not None:
+                comparison["min_improvement_pct"] = threshold[0]
+                comparison["kpi_higher_is_better"] = threshold[1]
+            comparisons.append(comparison)
     report = analyser.evaluate_comparisons(comparisons=comparisons, apply_holm_correction=True)
     if report.empty:
         st.info("No valid comparisons for current filters.")

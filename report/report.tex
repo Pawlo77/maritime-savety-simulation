@@ -87,7 +87,7 @@ This section describes the simulation environment, agent types, weather field, c
 
 The simulation occupies a $100 \times 100$\,nm continuous space implemented with the Mesa agent-based modelling framework~\cite{mesa2020}. The world includes an explicit static land mask configured as an island-archipelago layout: an irregular western mainland plus distributed offshore islands and shallow banks, used consistently in both runtime dynamics and dashboard rendering. Default traffic uses five intersecting non-linear waypoint routes designed for GUI usability and map interpretability: three west-east corridors (\texttt{west\_east\_southern}, \texttt{west\_east\_mid\_channel}, \texttt{west\_east\_northern\_arc}) and two north-south corridors (\texttt{north\_south\_west\_channel}, \texttt{north\_south\_central\_channel}). These defaults satisfy lane-validity constraints at startup (shore proximity, shoreline clearance, and end-point boundary/shore conditions), so initial dashboard runs do not require manual path repair. Shipping lanes are represented as ordered waypoint polylines constrained to open water (lane segments intersecting land are rejected at configuration time). The model supports one or more coastal stations; each station must be placed on land and broadcasts with radius $R_\text{shore} = 50$\,nm. Vessel initialisation is route-constrained: for each agent, one route endpoint is sampled (with configurable endpoint weights), then a spawn point is drawn from an annulus centred on that endpoint with radius bounds $[r_\text{min}, r_\text{max}]$ and an outer-ring sampling bias toward $r_\text{max}$.
 
-The scheduler runs at a \emph{macro tick} of 15\,min ($\Delta t = 0.25$\,hr) for all strategic logic. Whenever any vessel pair closes to within 5\,nm, the step function switches to \emph{micro ticks} of 30\,s for COLREGs resolution, returning to macro mode once separation is restored. All stochastic draws share a single seeded random-number generator so that two runs with the same seed produce byte-identical KPI logs.
+The scheduler runs at a fixed \emph{macro tick} of 15\,min ($\Delta t = 0.25$\,hr) for strategic and tactical logic. COLREGs manoeuvre decisions are therefore evaluated at macro-tick cadence. All stochastic draws share a single seeded random-number generator so that two runs with the same seed produce byte-identical KPI logs.
 
 \subsection{Agent Types}
 
@@ -189,7 +189,7 @@ Motivation for this approach is as follows: confidence weighting allows vessels 
 A vessel counts how many ticks have elapsed since its last valid shore broadcast (\texttt{shore\_age\_ticks}). Shore trust decays exponentially with that count:
 %
 \begin{equation}
-  \lambda_\text{ship} = 1 - e^{-k_\lambda\,/\,\texttt{shore\_age\_ticks}},
+  \lambda_\text{ship} = 1 - e^{-(\texttt{shore\_age\_ticks}-1)/k_\lambda},
   \quad k_\lambda = 5,
   \label{eq:lambda}
 \end{equation}
@@ -336,11 +336,11 @@ Table~\ref{tab:scenarios} summarises the four scenarios. All share the same $100
         Scenario & Key conditions & Hyp. \\
         \midrule
         1 — Calm Passage &
-        20 vessels, $W{<}0.15$, $\sigma_\text{shore}{=}0.05$.
+        20 vessels, calm-biased weather profile, $\sigma_\text{shore}{=}0.05$.
         Pass: ${<}0.5$ collisions per 1\,k ship-hrs. &
         Calib. \\[4pt]
         2 — Storm Corridor &
-        25 vessels (30\,\% Green crew); $W{>}0.75$ cell on E--W lane;
+        25 vessels (30\,\% Green crew); storm-focused weather profile;
         $\sigma_\text{shore}{=}0.18$. &
         H1 \\[4pt]
         3 — Blind Shore &
@@ -348,8 +348,8 @@ Table~\ref{tab:scenarios} summarises the four scenarios. All share the same $100
         at tick~40. &
         H3 \\[4pt]
         4 — Deep Water Rescue &
-        15 vessels ${>}60$\,nm offshore; $W$ spikes to 0.90 at tick~30;
-        no vessel within shore radio range. &
+        15 vessels with endpoint-centred offshore spawn annulus ${>}60$\,nm;
+        $W$ spikes to 0.90 at tick~30. &
         H2, H3 \\
         \bottomrule
     \end{tabularx}
@@ -394,6 +394,34 @@ Table~\ref{tab:kpis} defines the six KPIs collected per run. KPIs~1--2 test H1, 
 
 Hypothesis decisions use the Mann-Whitney U test --- appropriate for the bounded, non-normal KPI distributions produced by a finite-agent simulation. Effect sizes are reported as Cliff's $\Delta$~\cite{cliff1993}; both $p < 0.05$ and $\Delta > 0.2$ (small effect) are required for H1 and H3 to be confirmed. Confidence intervals are bootstrapped over the 30 seeds. The same seed sequence is applied to all conditions to eliminate seed-selection bias from pairwise comparisons. For each run, the full effective weather parameter set and seed are written to the manifest, enabling byte-level replay and sensitivity sweeps over the weather process.
 
+\subsection{Operational Hyperparameters and Runtime Profile}
+
+Beyond scenario-level stressors, the engine exposes a complete set of run-control hyperparameters in the GUI and run manifest. This enables direct auditability of experiment context and supports long-horizon what-if studies without changing agent logic.
+
+\begin{table*}[htbp]
+    \caption{Operational hyperparameters used in configured runs.}
+    \label{tab:operational-hparams}
+    \centering
+    \small
+    \begin{tabularx}{16cm}{@{}lX@{}}
+        \toprule
+        Hyperparameter & Value / role \\
+        \midrule
+        \texttt{n\_vessels} & Fleet size per run. Stress profile now supports up to 100 vessels. \\
+        \texttt{n\_ticks} & Simulation horizon. At 15\,min/tick, month-long runs use 2880 ticks. \\
+        \texttt{n\_seeds} & Number of independent stochastic repetitions per method/scenario pair. \\
+        \texttt{world\_size\_nm} & Physical map extent (default 100$\times$100\,nm). \\
+        \texttt{min/max\_spawn\_distance\_nm} & Endpoint-centred spawn annulus bounds controlling offshore traffic initialisation. \\
+        \texttt{lane\_endpoint\_spawn\_weights} & Per-route endpoint sampling weights shaping directional traffic density. \\
+        \texttt{vessel\_radio\_range\_nm}, \texttt{max\_hop\_count} & Mesh communication reach and relay depth. \\
+        \texttt{shore\_broadcast\_radius\_nm}, \texttt{radio\_packet\_loss\_rate} & Shore coverage and stochastic communication degradation. \\
+        Weather Tier-2 parameters & Regime transitions, storm spawning, system geometry, drift, persistence, coupling, shocks, and hazard-channel weights. \\
+        \bottomrule
+    \end{tabularx}
+\end{table*}
+
+To maintain stable exposure over long horizons, terminal vessel states (\texttt{SUNK}, \texttt{RESCUED}) are recycled in-engine: agents are removed from the scheduler, replaced with freshly spawned vessels, and the active population is restored to the configured \texttt{n\_vessels} target each tick. This keeps month-long high-density runs analytically comparable across methods despite attrition.
+
 % ==================================================================
 \section{Results GUI}
 \label{sec:results-gui}
@@ -411,11 +439,11 @@ The GUI currently assumes schema-compatible outputs (\texttt{summary.csv}, per-r
 \label{sec:discussion}
 % ==================================================================
 
-The target reference rate for calibration — 5 fatal events per $1\,000$ ship-hours under Baseline~A in Scenario~2 (Table~\ref{tab:scenarios}) — is grounded in AIS-derived near-miss encounter statistics~\cite{silveira2013}. If H1 or H2 fail statistically, the mitigation is to recalibrate $\alpha$, $\beta$, $\gamma$ in Eq.~\ref{eq:evac} or widen $\sigma_\text{shore}$ before final reporting; design parameters were chosen conservatively to make this adjustment feasible without invalidating the comparison.
+The target reference rate for calibration — fewer than 0.5 collisions per $1\,000$ ship-hours under Baseline~A in Scenario~1 (Table~\ref{tab:scenarios}) — is grounded in AIS-derived near-miss encounter statistics~\cite{silveira2013}. If H1 or H2 fail statistically, the mitigation is to recalibrate $\alpha$, $\beta$, $\gamma$ in Eq.~\ref{eq:evac} or widen $\sigma_\text{shore}$ before final reporting; design parameters were chosen conservatively to make this adjustment feasible without invalidating the comparison.
 
 The two-hop relay is sized deliberately: with $15$\,nm vessel radio range and vessels distributed along the 100\,nm east--west tanker lane, three ships can collectively bridge the 45\,nm shore shadow tested in Scenario~4 (Table~\ref{tab:scenarios}). Removing the hop limit (unbounded flooding) would close the gap trivially and obscure the protocol's practical value; the two-hop constraint models a real latency and battery trade-off in maritime IoT deployment.
 
-The simulation is kept compact — up to 50 agents and a $50 \times 50$ weather grid — to remain within a 16\,GB RAM ceiling and to produce visually legible scenario track maps in a live Streamlit dashboard. The framework is nonetheless extensible: lane geometry, agent counts, weather severity, and $\sigma_\text{shore}$ are all constructor parameters, and additional experiment configurations can be added as factory functions without modifying any agent logic.
+The simulation now supports higher-density long-horizon studies — up to 100 concurrent vessels and month-long (2880 tick) runs on the stress profile — while retaining a $50 \times 50$ weather grid for map legibility and interactive dashboard performance on commodity laptops. The framework remains extensible: lane geometry, agent counts, run horizon, weather severity, and $\sigma_\text{shore}$ are all constructor parameters, and additional experiment configurations can be added as factory functions without modifying any agent logic.
 
 \bibliographystyle{IEEEtran}
 \bibliography{mybib}
