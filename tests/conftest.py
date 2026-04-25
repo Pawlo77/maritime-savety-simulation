@@ -1,47 +1,34 @@
-import shutil
-from contextlib import suppress
 from pathlib import Path
 
+import numpy as np
 import pytest
 
+from maritime_mesh.config import ScenarioConfig, SimulationConfig
+from maritime_mesh.enums import MethodCondition
 
-@pytest.fixture(autouse=True)
-def cleanup_mlflow_artifacts() -> None:
-    """Remove repository-root MLflow data created during a test."""
-    root = Path(__file__).resolve().parents[1]
-    tracked_root = root / "mlruns"
-    tracked_files = [
-        root / "mlruns.db",
-        root / "mlruns.db-wal",
-        root / "mlruns.db-shm",
-        root / "mlruns.db-journal",
-    ]
 
-    baseline_file_exists = {path: path.exists() for path in tracked_files}
-    baseline_paths = set()
-    if tracked_root.exists():
-        baseline_paths = {path.relative_to(root) for path in tracked_root.rglob("*")}
+@pytest.fixture
+def seeded_rng() -> np.random.Generator:
+    """Provide deterministic shared RNG fixture."""
+    return np.random.default_rng(1234)
 
-    try:
-        yield
-    finally:
-        if tracked_root.exists():
-            current_paths = sorted(
-                (path for path in tracked_root.rglob("*") if path != tracked_root),
-                key=lambda path: len(path.parts),
-                reverse=True,
-            )
-            for path in current_paths:
-                relative_path = path.relative_to(root)
-                if relative_path in baseline_paths:
-                    continue
-                if path.is_dir():
-                    shutil.rmtree(path, ignore_errors=True)
-                else:
-                    with suppress(FileNotFoundError):
-                        path.unlink()
 
-        for path in tracked_files:
-            if path.exists() and path.is_file() and not baseline_file_exists[path]:
-                with suppress(FileNotFoundError):
-                    path.unlink()
+@pytest.fixture
+def default_simulation_config(tmp_path: Path) -> SimulationConfig:
+    """Provide compact deterministic simulation config."""
+    scenario = ScenarioConfig(
+        name="test_scenario",
+        n_vessels=4,
+        shore_noise_std=0.1,
+        green_crew_fraction=0.25,
+    )
+    return SimulationConfig(
+        scenario=scenario,
+        method=MethodCondition.PROPOSED,
+        seed=1234,
+        n_ticks=6,
+        mesh_enabled=True,
+        evacuation_enabled=True,
+        human_factors_enabled=True,
+        output_dir=tmp_path,
+    )

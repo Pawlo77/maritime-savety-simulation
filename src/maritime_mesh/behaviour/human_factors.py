@@ -15,7 +15,7 @@ class CircadianModel:
 
     def vigilance(self, t_utc_hours: float) -> float:
         """Return vigilance factor for current UTC hour."""
-        return math.cos((2.0 * math.pi / 24.0) * (t_utc_hours - CIRCADIAN_NADIR_HOUR_UTC))
+        return -math.cos((2.0 * math.pi / 24.0) * (t_utc_hours - CIRCADIAN_NADIR_HOUR_UTC))
 
 
 class ErrorProbabilityModel:

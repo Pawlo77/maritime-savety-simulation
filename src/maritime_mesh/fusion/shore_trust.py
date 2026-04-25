@@ -15,7 +15,7 @@ class ShoreTrustDecay:
     def compute(self, shore_age_ticks: int) -> float:
         """Compute trust weight as staleness-dependent lambda."""
         age = max(1, shore_age_ticks)
-        return 1.0 - math.exp(-self.decay_k / float(age))
+        return 1.0 - math.exp(-float(age - 1) / self.decay_k)
 
 
 class ForecastFuser:
