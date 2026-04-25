@@ -6,6 +6,7 @@ import numpy as np
 
 from maritime_mesh.mesa_compat import Agent, Model
 
+
 class AbstractMesaAgent(Agent, ABC):
     """Thin abstract base over mesa.Agent."""
 

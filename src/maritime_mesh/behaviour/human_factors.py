@@ -2,7 +2,12 @@
 
 import math
 
-from maritime_mesh.constants import CIRCADIAN_NADIR_HOUR_UTC, CIRCADIAN_WEIGHT, ERROR_BIAS, FATIGUE_WEIGHT
+from maritime_mesh.constants import (
+    CIRCADIAN_NADIR_HOUR_UTC,
+    CIRCADIAN_WEIGHT,
+    ERROR_BIAS,
+    FATIGUE_WEIGHT,
+)
 
 
 def _sigmoid(value: float) -> float:
@@ -31,5 +36,10 @@ class ErrorProbabilityModel:
         if not self.enabled:
             return 0.0
         f_circ = self.circadian_model.vigilance(t_utc_hours=t_utc_hours)
-        logit = (FATIGUE_WEIGHT * hours_awake) + (CIRCADIAN_WEIGHT * f_circ) + archetype_modifier - ERROR_BIAS
+        logit = (
+            (FATIGUE_WEIGHT * hours_awake)
+            + (CIRCADIAN_WEIGHT * f_circ)
+            + archetype_modifier
+            - ERROR_BIAS
+        )
         return _sigmoid(logit)

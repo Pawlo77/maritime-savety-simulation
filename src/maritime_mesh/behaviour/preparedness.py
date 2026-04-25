@@ -21,7 +21,9 @@ class PreparednessScorer:
         """Compute preparedness score in [0, 1]."""
         if self.fixed_value is not None:
             return float(min(1.0, max(0.0, self.fixed_value)))
-        value = 1.0 - (self.forecast_error_penalty * forecast_error) - (
-            self.archetype_penalty * archetype_modifier
+        value = (
+            1.0
+            - (self.forecast_error_penalty * forecast_error)
+            - (self.archetype_penalty * archetype_modifier)
         )
         return float(min(1.0, max(0.0, value)))

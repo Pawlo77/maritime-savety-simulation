@@ -59,9 +59,27 @@ class StatisticalAnalyser:
     def full_report(self) -> pd.DataFrame:
         """Produce compact hypothesis report across scenario-specific KPIs."""
         comparisons = [
-            ("scenario_2_storm_corridor", "collision_per_1k_hrs", MethodCondition.PROPOSED, MethodCondition.BASELINE_B, "H1"),
-            ("scenario_4_deep_water_rescue", "survival_ratio", MethodCondition.PROPOSED, MethodCondition.BASELINE_B, "H2"),
-            ("scenario_3_blind_shore", "fatal_per_1k_hrs", MethodCondition.PROPOSED, MethodCondition.BASELINE_B, "H3"),
+            (
+                "scenario_2_storm_corridor",
+                "collision_per_1k_hrs",
+                MethodCondition.PROPOSED,
+                MethodCondition.BASELINE_B,
+                "H1",
+            ),
+            (
+                "scenario_4_deep_water_rescue",
+                "survival_ratio",
+                MethodCondition.PROPOSED,
+                MethodCondition.BASELINE_B,
+                "H2",
+            ),
+            (
+                "scenario_3_blind_shore",
+                "fatal_per_1k_hrs",
+                MethodCondition.PROPOSED,
+                MethodCondition.BASELINE_B,
+                "H3",
+            ),
         ]
         rows = []
         for scenario_name, kpi, cond_a, cond_b, hypothesis in comparisons:

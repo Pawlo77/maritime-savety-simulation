@@ -19,8 +19,7 @@ class CollisionDetector:
         for idx, vessel_a in enumerate(vessels):
             for vessel_b in vessels[idx + 1 :]:
                 if (
-                    dist(vessel_a.position, vessel_b.position)
-                    <= self.collision_radius_nm * 2.0
+                    dist(vessel_a.position, vessel_b.position) <= self.collision_radius_nm * 2.0
                     and vessel_a.state == VesselState.ACTIVE
                     and vessel_b.state == VesselState.ACTIVE
                 ):

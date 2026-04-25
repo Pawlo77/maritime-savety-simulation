@@ -23,8 +23,8 @@ class RaftDeploymentModel:
 
     def deploy(self, current_hazard: float, p_prep: float) -> bool:
         """Attempt deployment with hazard and preparedness effects."""
-        probability = self.base_success - (self.weather_penalty * current_hazard) + (
-            self.prep_bonus * p_prep
+        probability = (
+            self.base_success - (self.weather_penalty * current_hazard) + (self.prep_bonus * p_prep)
         )
         probability = float(min(1.0, max(0.0, probability)))
         return bool(self.rng.random() < probability)
