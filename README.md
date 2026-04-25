@@ -1,28 +1,19 @@
-# template
+# maritime_mesh
 
-Template repository for python projects
+Reproducible multi-agent maritime weather mesh simulation package.
 
 ## Quick Start
 
-Run the main checks and pipeline entry points:
-
 ```bash
-make install
-make datasets
-make test
-make pre-commit-all
+uv sync
+uv run pytest -q
+uv run python -c "from maritime_mesh.experiment.runner import ExperimentRunner; ExperimentRunner(n_seeds=1).run_all()"
+uv run streamlit run src/maritime_mesh/dashboard/app.py
 ```
 
-## MLflow
+## Project Structure
 
-Local MLflow runs are stored under `mlruns/` by default. Launch the UI with:
-
-```bash
-make mlflow
-
-# use a different port if 5000 is occupied
-make mlflow MLFLOW_PORT=5001
-
-# equivalent direct command
-mlflow ui --backend-store-uri sqlite:///mlruns.db --default-artifact-root ./mlruns
-```
+- `src/maritime_mesh/` - simulation package
+- `tests/unit/` - module-level unit tests
+- `tests/integration/` - scenario and runner integration tests
+- `outputs/maritime_mesh/` - generated summaries and per-run parquet logs
