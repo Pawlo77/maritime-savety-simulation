@@ -63,8 +63,8 @@ def render(output_dir: Path) -> None:
         if condition.value in set(results["method"])
     ]
     kpis = [kpi for kpi in KPI_COLUMNS if kpi in set(results.columns)]
-    col_a, col_b = st.columns(2)
-    with col_a:
+    with st.sidebar:
+        st.markdown("### Hypothesis Filters")
         selected_scenarios = st.multiselect(
             "Scenarios",
             scenarios,
@@ -78,7 +78,6 @@ def render(output_dir: Path) -> None:
             default=kpis[: min(2, len(kpis))],
             key="hypothesis_kpis",
         )
-    with col_b:
         method_a = st.selectbox(
             "Condition A",
             methods,
@@ -94,15 +93,15 @@ def render(output_dir: Path) -> None:
             format_func=display_method_name,
             key="hypothesis_method_b",
         )
-    if st.button("Reset hypothesis filters", width="content"):
-        for key in (
-            "hypothesis_scenarios",
-            "hypothesis_kpis",
-            "hypothesis_method_a",
-            "hypothesis_method_b",
-        ):
-            st.session_state.pop(key, None)
-        st.rerun()
+        if st.button("Reset hypothesis filters", width="content"):
+            for key in (
+                "hypothesis_scenarios",
+                "hypothesis_kpis",
+                "hypothesis_method_a",
+                "hypothesis_method_b",
+            ):
+                st.session_state.pop(key, None)
+            st.rerun()
     if not selected_scenarios:
         st.info("Select at least one scenario to run comparisons.")
         return

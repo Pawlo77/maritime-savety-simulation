@@ -1,6 +1,7 @@
 """Experiment run helpers for GUI pages."""
 
 import logging
+import shutil
 from pathlib import Path
 
 import pandas as pd
@@ -123,6 +124,9 @@ def run_from_gui(
     max_workers: int = 1,
 ) -> pd.DataFrame:
     """Run experiment matrix from GUI controls."""
+    if output_dir.exists():
+        shutil.rmtree(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
     LOGGER.info(
         "GUI run requested (scenarios=%s methods=%s seeds=%s workers=%s)",
         len(selected_scenario_names),
@@ -190,6 +194,7 @@ def run_from_gui(
     runner = ExperimentRunner(
         n_seeds=n_seeds,
         max_workers=max_workers,
+        parallel_backend="thread",
         output_dir=output_dir,
         scenario_factories=scenario_factories,
         methods=selected_methods,

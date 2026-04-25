@@ -25,6 +25,19 @@ from maritime_mesh.dashboard.ui import (
 from maritime_mesh.experiment.analysis import StatisticalAnalyser
 
 
+def _safe_switch_page(candidates: list[str]) -> bool:
+    """Try page switches across multiple identifiers without crashing."""
+    if not hasattr(st, "switch_page"):
+        return False
+    for candidate in candidates:
+        try:
+            st.switch_page(candidate)
+            return True
+        except Exception:  # noqa: S112
+            continue
+    return False
+
+
 def _render_kpi_cards(filtered: pd.DataFrame) -> None:
     """Render compact KPI cards for quick orientation."""
     available = [column for column in KPI_COLUMNS if column in filtered.columns]
@@ -165,41 +178,43 @@ def render(output_dir: Path) -> None:
             "for ranking, significance, and outlier diagnosis."
         ),
     )
-    scenario_mode = st.radio(
-        "Scenario view",
-        ["Single scenario", "Side-by-side comparison"],
-        horizontal=True,
-        key="results_scenario_mode",
-    )
-    scenarios = sorted(results["scenario"].unique())
-    if scenario_mode == "Single scenario":
-        selected_scenarios = [
-            st.selectbox(
-                "Scenario",
-                scenarios,
-                format_func=display_scenario_name,
-                key="results_single_scenario",
-            )
-        ]
-    else:
-        selected_scenarios = st.multiselect(
-            "Scenarios",
-            scenarios,
-            default=scenarios[: min(2, len(scenarios))],
-            format_func=display_scenario_name,
-            key="results_multi_scenarios",
+    with st.sidebar:
+        st.markdown("### Results Filters")
+        scenario_mode = st.radio(
+            "Scenario view",
+            ["Single scenario", "Side-by-side comparison"],
+            horizontal=True,
+            key="results_scenario_mode",
         )
-        if not selected_scenarios:
-            st.info("Select at least one scenario.")
-            return
+        scenarios = sorted(results["scenario"].unique())
+        if scenario_mode == "Single scenario":
+            selected_scenarios = [
+                st.selectbox(
+                    "Scenario",
+                    scenarios,
+                    format_func=display_scenario_name,
+                    key="results_single_scenario",
+                )
+            ]
+        else:
+            selected_scenarios = st.multiselect(
+                "Scenarios",
+                scenarios,
+                default=scenarios[: min(2, len(scenarios))],
+                format_func=display_scenario_name,
+                key="results_multi_scenarios",
+            )
+            if not selected_scenarios:
+                st.info("Select at least one scenario.")
+                return
 
-    method_filter = st.multiselect(
-        "Methods to display",
-        sorted(results["method"].unique()),
-        default=sorted(results["method"].unique()),
-        format_func=display_method_name,
-        key="results_method_filter",
-    )
+        method_filter = st.multiselect(
+            "Methods to display",
+            sorted(results["method"].unique()),
+            default=sorted(results["method"].unique()),
+            format_func=display_method_name,
+            key="results_method_filter",
+        )
     filtered = results[
         (results["scenario"].isin(selected_scenarios)) & (results["method"].isin(method_filter))
     ]
@@ -210,19 +225,22 @@ def render(output_dir: Path) -> None:
             ("Reset filters, then re-apply gradually: scenario first, methods second, KPIs last."),
         )
         return
-    baseline_method = st.selectbox(
-        "Baseline method for deltas/significance",
-        sorted(filtered["method"].unique()),
-        format_func=display_method_name,
-        key="results_baseline_method",
-    )
-    available_kpis = [column for column in KPI_COLUMNS if column in filtered.columns]
-    selected_kpis = st.multiselect(
-        "KPIs to visualize",
-        available_kpis,
-        default=["survival_ratio"] if "survival_ratio" in available_kpis else available_kpis[:1],
-        key="results_selected_kpis",
-    )
+    with st.sidebar:
+        baseline_method = st.selectbox(
+            "Baseline method for deltas/significance",
+            sorted(filtered["method"].unique()),
+            format_func=display_method_name,
+            key="results_baseline_method",
+        )
+        available_kpis = [column for column in KPI_COLUMNS if column in filtered.columns]
+        selected_kpis = st.multiselect(
+            "KPIs to visualize",
+            available_kpis,
+            default=["survival_ratio"]
+            if "survival_ratio" in available_kpis
+            else available_kpis[:1],
+            key="results_selected_kpis",
+        )
     default_focus_kpi = (
         "survival_ratio"
         if "survival_ratio" in selected_kpis
@@ -230,23 +248,24 @@ def render(output_dir: Path) -> None:
         if selected_kpis
         else None
     )
-    focus_kpi = (
-        st.selectbox(
-            "Focus KPI",
-            selected_kpis,
-            index=selected_kpis.index(default_focus_kpi),
-            key="results_focus_kpi",
+    with st.sidebar:
+        focus_kpi = (
+            st.selectbox(
+                "Focus KPI",
+                selected_kpis,
+                index=selected_kpis.index(default_focus_kpi),
+                key="results_focus_kpi",
+            )
+            if selected_kpis
+            else None
         )
-        if selected_kpis
-        else None
-    )
-    if st.button("Reset result filters", width="content"):
-        st.session_state["results_scenario_mode"] = "Single scenario"
-        st.session_state["results_method_filter"] = sorted(results["method"].unique())
-        st.session_state["results_selected_kpis"] = (
-            ["survival_ratio"] if "survival_ratio" in available_kpis else available_kpis[:1]
-        )
-        st.rerun()
+        if st.button("Reset result filters", width="content"):
+            st.session_state["results_scenario_mode"] = "Single scenario"
+            st.session_state["results_method_filter"] = sorted(results["method"].unique())
+            st.session_state["results_selected_kpis"] = (
+                ["survival_ratio"] if "survival_ratio" in available_kpis else available_kpis[:1]
+            )
+            st.rerun()
     active_scenarios_label = ", ".join(display_scenario_name(name) for name in selected_scenarios)
     active_methods_label = ", ".join(
         display_method_name(name) for name in sorted(filtered["method"].unique())
@@ -265,25 +284,6 @@ def render(output_dir: Path) -> None:
         ),
         unsafe_allow_html=True,
     )
-    jump_a, jump_b = st.columns(2)
-    with jump_a:
-        if st.button("Open this context in Map Playback", width="stretch"):
-            st.session_state["playback_scenario"] = selected_scenarios[0]
-            st.session_state["playback_method_filter"] = sorted(filtered["method"].unique())
-            st.session_state["playback_method"] = baseline_method
-            if hasattr(st, "switch_page"):
-                st.switch_page("map-playback")
-            else:
-                st.success("Playback context prepared. Open Map Playback tab.")
-    with jump_b:
-        if st.button("Open this context in Hypothesis", width="stretch"):
-            st.session_state["hypothesis_scenarios"] = selected_scenarios
-            st.session_state["hypothesis_method_a"] = baseline_method
-            if hasattr(st, "switch_page"):
-                st.switch_page("hypothesis")
-            else:
-                st.success("Hypothesis context prepared. Open Hypothesis tab.")
-
     tab_overview, tab_explorer, tab_ranking, tab_significance, tab_outliers, tab_means = st.tabs(
         [
             "Results Overview",

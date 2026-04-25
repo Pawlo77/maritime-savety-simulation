@@ -112,6 +112,8 @@ class KpiLogger:
         relay_links: list[tuple[int, int]],
         collisions: list[tuple[int, int]],
         land_collisions: list[tuple[int, tuple[float, float]]],
+        despawned_arrivals: list[tuple[int, tuple[float, float]]],
+        rescue_dispatches: list[tuple[int, int, tuple[float, float]]],
         land_shapes: tuple,
         weather_field,
         world_size_nm: float,
@@ -133,6 +135,8 @@ class KpiLogger:
                     "n_survivors": vessel.n_survivors,
                     "p_prep": vessel.p_prep,
                     "has_evacuated": vessel.has_evacuated,
+                    "sos_sent": vessel.sos_sent,
+                    "sos_reason": vessel.sos_reason,
                     "x_nm": vessel.position[0],
                     "y_nm": vessel.position[1],
                     "heading_deg": vessel.heading_deg,
@@ -176,6 +180,7 @@ class KpiLogger:
                     "mobilisation_ticks_remaining": rescue.mobilisation_ticks_remaining,
                     "target_x_nm": rescue.target_position[0],
                     "target_y_nm": rescue.target_position[1],
+                    "is_idle": bool(rescue.is_idle),
                     "world_size_nm": world_size_nm,
                     "simulation_seed": simulation_seed,
                 }
@@ -215,6 +220,35 @@ class KpiLogger:
                     "source_id": vessel_id,
                     "x_nm": position[0],
                     "y_nm": position[1],
+                    "world_size_nm": world_size_nm,
+                    "simulation_seed": simulation_seed,
+                }
+            )
+        for vessel_id, position in despawned_arrivals:
+            self.event_records.append(
+                {
+                    "tick": tick,
+                    "entity_type": "intervention_event",
+                    "entity_id": f"despawned_{vessel_id}_{tick}",
+                    "event_kind": "despawned",
+                    "source_id": vessel_id,
+                    "x_nm": position[0],
+                    "y_nm": position[1],
+                    "world_size_nm": world_size_nm,
+                    "simulation_seed": simulation_seed,
+                }
+            )
+        for rescue_id, vessel_id, dispatch_position in rescue_dispatches:
+            self.event_records.append(
+                {
+                    "tick": tick,
+                    "entity_type": "intervention_event",
+                    "entity_id": f"rescue_dispatch_{rescue_id}_{vessel_id}_{tick}",
+                    "event_kind": "rescue_dispatch",
+                    "source_id": rescue_id,
+                    "target_id": vessel_id,
+                    "x_nm": dispatch_position[0],
+                    "y_nm": dispatch_position[1],
                     "world_size_nm": world_size_nm,
                     "simulation_seed": simulation_seed,
                 }

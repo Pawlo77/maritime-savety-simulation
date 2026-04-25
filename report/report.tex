@@ -9,7 +9,7 @@
 \usepackage{array}
 \usepackage{enumitem}
 \usepackage{tikz}
-\usetikzlibrary{arrows.meta,positioning}
+\usetikzlibrary{arrows.meta,positioning,shapes.geometric}
 
 \title{Decentralised Weather Mesh Networking for Maritime Safety:\\
        A Multi-Agent Simulation Study}
@@ -280,6 +280,52 @@ The residual forecast error $E_\text{wx} = |\hat{W}_\text{blend} - W_\text{true}
 \label{sec:behaviour}
 % ==================================================================
 
+Fig.~\ref{fig:vessel-pipeline} shows the full per-tick decision pipeline executed by every \texttt{VesselAgent}. The subsections below detail each block.
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[
+  >=Stealth, font=\scriptsize,
+  node distance=0.45cm and 1.3cm,
+  proc/.style={draw, rounded corners=3pt, fill=gray!8,
+               minimum width=2.9cm, minimum height=0.60cm,
+               align=center, inner sep=4pt},
+  dec/.style={draw, diamond, shape aspect=2.2, fill=yellow!18,
+              minimum width=2.9cm, align=center, inner sep=2pt, font=\tiny},
+  alarm/.style={draw, rounded corners=3pt, fill=orange!12,
+                minimum width=2.3cm, minimum height=0.60cm,
+                align=center, inner sep=3pt},
+  arr/.style={->, semithick},
+]
+  %% Main vertical path
+  \node[proc] (recv) {Receive shore \& mesh\\broadcasts};
+  \node[proc, below=of recv] (fuse) {Compute $\hat{W}_\text{blend}$, $E_\text{wx}$\\(Eqs.~\ref{eq:confidence}--\ref{eq:blend})};
+  \node[proc, below=of fuse] (prep) {Update $P_\text{prep}$\\(Eq.~\ref{eq:Pprep})};
+  \node[dec,  below=of prep] (stateq) {state $=$ \texttt{ACTIVE}?};
+  \node[dec,  below=0.5cm of stateq] (evacq) {Bernoulli$(P_\text{evac})$?\\(Eq.~\ref{eq:evac})};
+  \node[proc, below=0.5cm of evacq] (nav) {Navigate at hazard-gated\\speed $\max(0.30,\,1{-}0.45W)\cdot v$};
+
+  %% Right-side branches
+  \node[alarm, right=1.3cm of stateq] (crew)
+    {Crew loss:\\Bernoulli$(1{-}W)$};
+  \node[alarm, right=1.3cm of evacq] (sos)
+    {SOS broadcast;\\enter \texttt{EVAC}};
+
+  %% Arrows — main path
+  \draw[arr] (recv)   -- (fuse);
+  \draw[arr] (fuse)   -- (prep);
+  \draw[arr] (prep)   -- (stateq);
+  \draw[arr] (stateq) -- node[left, font=\tiny]{Y} (evacq);
+  \draw[arr] (evacq)  -- node[left, font=\tiny]{N} (nav);
+
+  %% Arrows — branches
+  \draw[arr] (stateq.east) -- node[above, font=\tiny]{N (\texttt{EVAC})} (crew.west);
+  \draw[arr] (evacq.east)  -- node[above, font=\tiny]{Y} (sos.west);
+\end{tikzpicture}
+\caption{Per-tick behavioural pipeline for every \texttt{VesselAgent} (macro-tick step~5). Shore and mesh inboxes are fused into $\hat{W}_\text{blend}$, from which $P_\text{prep}$ is derived. An \texttt{ACTIVE} vessel then samples the evacuation probability; failure to trigger leads to hazard-gated navigation while a positive draw broadcasts SOS and opens the rescue pipeline. Vessels already in \texttt{EVAC} bypass the decision branch and lose crew members each tick until rescue arrives.}
+\label{fig:vessel-pipeline}
+\end{figure}
+
 \subsection{Human Factors and Preparedness Score}
 
 Crew error probability integrates accumulated fatigue and the circadian rhythm of human vigilance. The circadian component is modelled as a negated cosine that reaches its minimum at 03:00~UTC — the well-documented performance nadir of watch-keepers~\cite{chauvin2013} — and its maximum at 15:00~UTC. The phase offset $\phi_\text{nadir} = 3$ (hours UTC) locates that trough:
@@ -316,18 +362,42 @@ with $\eta = 1.5$ and $\xi = 0.2$. $P_\text{prep}$ gates every tactical decision
 
 \subsection{Early Evacuation Decision}
 
-Each tick, a vessel samples whether to initiate evacuation:
+Each tick, a vessel first computes a baseline evacuation propensity:
+%
+\begin{equation}
+  P_\text{evac,raw} = \sigma\left(
+    b_0
+    +
+    \alpha\,\hat{W}_\text{blend}
+    - \beta\,E_\text{wx}
+    + \gamma\,P_\text{prep}
+  \right),
+  \label{eq:evac-raw}
+\end{equation}
+%
+with $b_0=-2.8$, $\alpha = 4.0$, $\beta = 2.5$, $\gamma = 1.8$. To prevent unrealistic mass evacuations in the first few ticks, the hazard term is ramped by both time and severity:
+%
+
+\begin{align}
+  &\hat{W}_\text{eff} = \hat{W}_\text{blend} \cdot r_t \cdot r_w, \\
+  &r_t = \operatorname{clip}\left(\frac{t+1}{24},\,0.08,\,1\right), \\
+  &r_w = \operatorname{clip}\left(\frac{\hat{W}_\text{blend}}{0.75},\,0.10,\,1\right),
+  \label{eq:evac-ramp}
+\end{align}
+%
+and the final Bernoulli trigger uses:
 %
 \begin{equation}
   P_\text{evac} = \sigma\left(
-    \alpha\,\hat{W}_\text{blend}
+    b_0
+    + \alpha\,\hat{W}_\text{eff}
     - \beta\,E_\text{wx}
     + \gamma\,P_\text{prep}
   \right),
   \label{eq:evac}
 \end{equation}
 %
-with $\alpha = 4.0$, $\beta = 2.5$, $\gamma = 1.8$. A high blended hazard estimate and a high preparedness score promote early evacuation; large forecast error suppresses it, preventing false alarms in noisy information conditions. The parameters are calibrated to produce an evacuation activation rate (KPI~5) of around 20\,\% in the high-hazard Scenario~2. On trigger, the vessel broadcasts an SOS packet and begins raft deployment.
+A high effective hazard estimate and high preparedness score promote evacuation; large forecast error suppresses it, preventing false alarms in noisy information conditions. This preserves hazard sensitivity while damping early-tick false positives. On trigger, the vessel broadcasts an SOS packet and begins raft deployment.
 
 \subsection{Raft Deployment and Post-Incident Survival}
 
@@ -416,7 +486,7 @@ Each simulation run uses $n_\text{ticks}=2880$ with a 15\,min macro tick (Sectio
 
 \subsection{Key Performance Indicators}
 
-Table~\ref{tab:kpis} defines the six KPIs collected per run. KPIs~1--2 test H1, KPIs~3--5 test H2, and KPI~6 tests H3. All are computed from the per-tick Pandas log flushed to Parquet at run end, ensuring reproducibility.
+Table~\ref{tab:kpis} defines the six KPIs collected per run. KPIs~1--2 test H1, KPIs~3--5 test H2, and KPI~6 tests H3. All are computed from per-tick logs flushed incrementally to Parquet chunks during execution, then aggregated for analysis, ensuring reproducibility while avoiding high in-memory retention on long runs.
 
 \begin{table}[htbp]
     \caption{KPI definitions and hypothesis links. \textit{ship-hrs} $=$ total agent-hours in \texttt{ACTIVE} or \texttt{EVAC} state.}
@@ -531,9 +601,9 @@ A uniform random hazard field would not produce the spatial divergence between s
 Each tick the $50\times50$ grid is updated in seven ordered stages.
 
 \begin{itemize}[leftmargin=*, itemsep=2pt]
-    \item \textbf{Regime switch.} A Bernoulli draw may flip the global regime: calm$\to$storm at probability $p_{cs}$ (default 0.03), storm$\to$calm at probability $p_{sc}$ (default 0.08). The asymmetry keeps storm episodes short relative to calm periods, in line with North-Sea base rates.
+    \item \textbf{Regime switch.} A Bernoulli draw may flip the global regime: calm$\to$storm at probability $p_{cs}$ (default 0.03), storm$\to$calm at probability $p_{sc}$ (default 0.08). For the \texttt{calm} preset, the transition kernel is additionally damped ($p_{cs}\times0.35$, $p_{sc}\times1.4$) to avoid unrealistically fast escalation.
 
-    \item \textbf{Storm cell lifecycle.} Up to \texttt{max\_systems} circular cells may be active. Each tick a new cell may spawn at probability $p_\text{spawn}\times r_\text{regime}$ ($r=1.35$ in storm, $0.65$ in calm). Active cells drift at 0.6 grid-cells/tick along a jittered bearing; radius oscillates sinusoidally; intensity decays faster in calm (0.020/tick) than in storm (0.006/tick). Cells below intensity 0.12 are removed.
+    \item \textbf{Storm cell lifecycle.} Up to \texttt{max\_systems} circular cells may be active. Each tick a new cell may spawn at probability $p_\text{spawn}\times r_\text{regime}$ ($r=1.35$ in storm, $0.65$ in calm by default). For the \texttt{calm} preset this boost is reduced further (storm 0.75, calm 0.20), and overlay/coupling/shock amplitudes are down-scaled to preserve calm persistence. Active cells drift at 0.6 grid-cells/tick along a jittered bearing; radius oscillates sinusoidally; intensity decays faster in calm (0.020/tick) than in storm (0.006/tick). Cells below intensity 0.12 are removed.
 
     \item \textbf{Background AR(1) evolution.} Each channel evolves with advection and mean-reversion:
     \begin{equation}
@@ -563,37 +633,46 @@ Each tick the $50\times50$ grid is updated in seven ordered stages.
 \subsection{Agent Communication}
 \label{sec:relay-impl}
 
-\begin{figure}[htbp]
+\begin{figure*}[t]
 \centering
-\begin{tikzpicture}[x=0.085cm, y=1.0cm, >=Stealth, font=\scriptsize]
-  \fill[blue!10] (0,-0.44) rectangle (50,0.44);
-  \draw[blue!35, dashed] (50,-0.55) -- (50,0.55);
-  \node[blue!60, font=\tiny, align=center] at (25,0.28) {shore coverage};
-  \fill[gray!7] (50,-0.44) rectangle (90,0.44);
-  \node[gray!65, font=\tiny] at (68,0.28) {radio shadow};
-  \filldraw[black!80] (0,0) circle (2.2pt);
-  \node[above, font=\tiny, black!80] at (0,0.12) {\textbf{S}};
-  \foreach \x/\lbl/\col in {50/A/orange!90!black, 65/B/orange!75!black, 80/C/red!55!black} {
-    \filldraw[\col] (\x,0) circle (2.4pt);
-    \node[above, font=\tiny, \col] at (\x,0.12) {\lbl};
-    \draw[\col!55, thin] (\x-15,-0.30) -- (\x+15,-0.30);
-    \draw[\col!55, thin] (\x-15,-0.36) -- (\x-15,-0.24);
-    \draw[\col!55, thin] (\x+15,-0.36) -- (\x+15,-0.24);
-    \node[below, font=\tiny, \col!75] at (\x,-0.45) {15\,nm};
-  }
-  \draw[->, thick, blue!60] (2,0.12) -- (48,0.12)
-      node[midway, above, font=\tiny]{direct ($\leq$50\,nm)};
-  \draw[->, thick, orange!85!black] (52,0.12) -- (63,0.12)
-      node[midway, above, font=\tiny]{hop 1};
-  \draw[->, thick, orange!70!black] (67,0.12) -- (78,0.12)
-      node[midway, above, font=\tiny]{hop 2};
-  \draw[->] (-1,-0.72) -- (91,-0.72) node[right, font=\tiny]{nm};
+\begin{tikzpicture}[x=0.19cm, >=Stealth]
+  %% Background zones — no text inside; caption explains the shading
+  \fill[blue!10] (0,-0.15) rectangle (50, 0.92);
+  \fill[gray!8]  (50,-0.15) rectangle (87, 0.92);
+  \draw[blue!40, dashed, thick] (50,-0.28) -- (50, 1.02);
+
+  %% Relay arrows — sole occupants of their horizontal band (y = 0.52)
+  \draw[->, thick, blue!65] (2, 0.52) -- (48, 0.52)
+    node[midway, above=3pt, font=\small]{direct ($\leq 50$\,nm)};
+  \draw[->, thick, orange!80!black] (52, 0.52) -- (63, 0.52)
+    node[midway, above=3pt, font=\small]{hop\,1 ($+15$\,nm)};
+  \draw[->, thick, orange!65!black] (67, 0.52) -- (78, 0.52)
+    node[midway, above=3pt, font=\small]{hop\,2 ($+15$\,nm)};
+
+  %% Centre line
+  \draw[gray!35, thin] (0,0) -- (87,0);
+
+  %% Station and vessel dots — labels placed below, away from arrows
+  \filldraw[black!85] (0,0) circle (3.5pt);
+  \node[below=5pt, font=\small\bfseries] at (0,0) {S};
+
+  \filldraw[orange!90!black] (50,0) circle (4pt);
+  \node[below=5pt, font=\small\bfseries, orange!90!black] at (50,0) {A};
+
+  \filldraw[orange!70!black] (65,0) circle (4pt);
+  \node[below=5pt, font=\small\bfseries, orange!70!black] at (65,0) {B};
+
+  \filldraw[red!60!black] (80,0) circle (4pt);
+  \node[below=5pt, font=\small\bfseries, red!60!black] at (80,0) {C};
+
+  %% X-axis — well below the vessel labels
+  \draw[->] (-2,-0.70) -- (89,-0.70) node[right, font=\small]{nm};
   \foreach \x in {0,25,50,65,80}
-    \draw[thin] (\x,-0.66) -- (\x,-0.78) node[below, font=\tiny]{\x};
+    \draw (\x,-0.65) -- (\x,-0.75) node[below, font=\scriptsize]{\x};
 \end{tikzpicture}
-\caption{Two-hop relay coverage. Shore station~S covers out to 50\,nm. Vessel~A (at the shore edge) relays to~B (hop~1), B relays to~C (hop~2), extending effective weather data reach to 80\,nm — a 30\,nm gain over shore-only. Range bars show each vessel's 15\,nm radio neighbourhood; a third hop is suppressed by \texttt{max\_hop\_count}~=~2.}
+\caption{Two-hop relay coverage (blue\,=\,shore zone $\leq 50$\,nm; gray\,=\,radio shadow). Shore station~S broadcasts directly within 50\,nm. Vessel~A (at the boundary) relays its local weather observation to~B (hop\,1, $+15$\,nm), which relays to~C (hop\,2, $+15$\,nm), extending effective data reach to 80\,nm — 30\,nm beyond the shore horizon. \texttt{max\_hop\_count}\,=\,2 suppresses a third relay.}
 \label{fig:relay}
-\end{figure}
+\end{figure*}
 
 Fig.~\ref{fig:relay} makes the two-hop design choice concrete. Shore covers the coastal band to 50\,nm. Each relay hop adds 15\,nm, so two hops extend the horizon to 80\,nm — comfortably covering the offshore spawn zones of Scenarios~3 and~4. A third hop would add another 15\,nm but at the cost of data already three ticks old by the time a vessel acts on it, plus a relay fanout that grows quadratically with fleet density per tick. Two hops is the configuration where coverage gain and communication overhead balance.
 
@@ -722,7 +801,7 @@ The GUI currently assumes schema-compatible outputs (\texttt{summary.csv}, per-r
 \label{sec:discussion}
 % ==================================================================
 
-The target reference rate for calibration — fewer than 0.5 collisions per $1\,000$ ship-hours under Baseline~A in Scenario~1 (Table~\ref{tab:scenarios}) — is grounded in AIS-derived near-miss encounter statistics~\cite{silveira2013}. If H1 or H2 fail statistically, the mitigation is to recalibrate $\alpha$, $\beta$, $\gamma$ in Eq.~\ref{eq:evac} or widen $\sigma_\text{shore}$ before final reporting; design parameters were chosen conservatively to make this adjustment feasible without invalidating the comparison.
+The target reference rate for calibration — fewer than 0.5 collisions per $1\,000$ ship-hours under Baseline~A in Scenario~1 (Table~\ref{tab:scenarios}) — is grounded in AIS-derived near-miss encounter statistics~\cite{silveira2013}. If H1 or H2 fail statistically, mitigation now includes recalibrating $(b_0,\alpha,\beta,\gamma)$ in Eq.~\ref{eq:evac-raw}, the ramp factors in Eq.~\ref{eq:evac-ramp}, or widening $\sigma_\text{shore}$ before final reporting; design parameters were chosen conservatively to make this adjustment feasible without invalidating the comparison.
 
 The two-hop relay is sized deliberately: with a 15\,nm vessel radio range, two hops extend the effective data horizon by 30\,nm beyond the 50\,nm shore broadcast radius, reaching 80\,nm — sufficient to serve the spawn zones of Scenarios~3 and~4 (Table~\ref{tab:scenarios}). Removing the hop limit (unbounded flooding) would close any remaining gap trivially but obscure the protocol's practical value; the two-hop constraint models a real latency and battery trade-off in maritime IoT deployment.
 
@@ -801,6 +880,7 @@ Table~\ref{tab:constants} lists every fixed constant defined in the engine with 
         \texttt{EVAC\_HAZARD\_WEIGHT} ($\alpha$) & 4.0 & Makes evacuation highly responsive to blended hazard above 0.5; logit exceeds 0 at $W_\text{blend} \approx 0.4$ for a prepared crew. \\
         \texttt{EVAC\_ERROR\_PENALTY} ($\beta$) & 2.5 & Suppresses evacuation when forecast error exceeds 0.4, preventing false alarms in noisy information conditions. \\
         \texttt{EVAC\_PREP\_WEIGHT} ($\gamma$) & 1.8 & Allows a fully prepared crew to evacuate at lower hazard thresholds than an unprepared one, quantifying the information-quality benefit. \\
+        \texttt{EVAC\_BASELINE\_BIAS} ($b_0$) & $-2.8$ & Negative logit offset preventing mass immediate evacuations when hazards are still moderate at simulation start. \\
         \texttt{RAFT\_BASE\_SUCCESS} ($B_\text{raft}$) & 0.90 & 90\,\% baseline deployment success in calm conditions, matching manufacturer-reported reliability for modern inflatable liferafts. \\
         \texttt{RAFT\_WEATHER\_PENALTY} ($\delta_\text{wx}$) & 0.60 & Deployment probability drops to $\approx 30\,\%$ at $W{=}1$; severe seas make raft inflation and boarding hazardous. \\
         \texttt{RAFT\_PREP\_BONUS} ($\delta_\text{prep}$) & 0.25 & A well-prepared crew recovers up to 25\,\% of the weather penalty through drills and readiness. \\

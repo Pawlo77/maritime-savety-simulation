@@ -224,13 +224,14 @@ class WeatherField:
         self._systems = next_systems
         return np.clip(sea_wind_overlay, 0.0, 1.0), np.clip(vis_overlay, 0.0, 1.0)
 
-    def _apply_front(self, base: np.ndarray) -> np.ndarray:
+    def _apply_front(self, base: np.ndarray, strength: float | None = None) -> np.ndarray:
         """Apply soft front structure to create coherent non-circular gradients."""
         direction = radians(self.weather_system_drift_direction_deg)
         plane = (self._grid_x * cos(direction)) + (self._grid_y * sin(direction))
         phase = float(self.rng.uniform(0.0, 2.0 * np.pi))
         front = 0.5 + (0.5 * np.sin((plane / 6.0) + phase))
-        return np.clip(base + (self.weather_front_strength * (front - 0.5)), 0.0, 1.0)
+        front_strength = self.weather_front_strength if strength is None else float(strength)
+        return np.clip(base + (front_strength * (front - 0.5)), 0.0, 1.0)
 
     def _evolve_background(
         self, channel: np.ndarray, persistence: float, innovation_scale: float
@@ -263,15 +264,43 @@ class WeatherField:
 
     def step(self) -> None:
         """Advance weather using regime switching and moving circular systems."""
+        is_calm_preset = self.weather_preset == "calm"
         if self.rng.random() < 0.2:
             self._advection_x = int(np.clip(self._advection_x + self.rng.integers(-1, 2), -1, 1))
             self._advection_y = int(np.clip(self._advection_y + self.rng.integers(-1, 2), -1, 1))
-        if self._regime == "calm" and self.rng.random() < self.weather_calm_to_storm_prob:
+        calm_to_storm_prob = self.weather_calm_to_storm_prob
+        storm_to_calm_prob = self.weather_storm_to_calm_prob
+        if is_calm_preset:
+            # Keep calm scenarios stable for early ticks and avoid rapid storm lock-in.
+            calm_to_storm_prob *= 0.35
+            storm_to_calm_prob = min(1.0, storm_to_calm_prob * 1.4)
+        if self._regime == "calm" and self.rng.random() < calm_to_storm_prob:
             self._regime = "storm"
-        elif self._regime == "storm" and self.rng.random() < self.weather_storm_to_calm_prob:
+        elif self._regime == "storm" and self.rng.random() < storm_to_calm_prob:
             self._regime = "calm"
 
-        regime_boost = 1.35 if self._regime == "storm" else 0.65
+        if is_calm_preset:
+            regime_boost = 0.75 if self._regime == "storm" else 0.20
+            sea_overlay_scale = 0.14
+            wind_overlay_scale = 0.12
+            vis_overlay_scale = 0.10
+            sea_anchor = 0.28
+            wind_anchor = 0.25
+            vis_anchor = 0.88
+            coupling_scale = 0.35
+            front_strength = self.weather_front_strength * 0.30
+            shock_probability = self.weather_shock_probability * 0.20
+        else:
+            regime_boost = 1.35 if self._regime == "storm" else 0.65
+            sea_overlay_scale = 0.45
+            wind_overlay_scale = 0.40
+            vis_overlay_scale = 0.35
+            sea_anchor = 0.5
+            wind_anchor = 0.5
+            vis_anchor = 0.7
+            coupling_scale = 1.0
+            front_strength = self.weather_front_strength
+            shock_probability = self.weather_shock_probability
         self._spawn_system(regime_boost=regime_boost)
         sea_wind_overlay, vis_overlay = self._advance_systems()
 
@@ -289,48 +318,49 @@ class WeatherField:
 
         self._sea = np.clip(
             (self.weather_background_persistence * self._sea)
-            + ((1.0 - self.weather_background_persistence) * 0.5)
-            + (0.45 * sea_wind_overlay),
+            + ((1.0 - self.weather_background_persistence) * sea_anchor)
+            + (sea_overlay_scale * sea_wind_overlay),
             0.0,
             1.0,
         )
         self._wind = np.clip(
             (self.weather_background_persistence * self._wind)
-            + ((1.0 - self.weather_background_persistence) * 0.5)
-            + (0.40 * sea_wind_overlay),
+            + ((1.0 - self.weather_background_persistence) * wind_anchor)
+            + (wind_overlay_scale * sea_wind_overlay),
             0.0,
             1.0,
         )
         self._vis = np.clip(
             (self.weather_background_persistence * self._vis)
-            + ((1.0 - self.weather_background_persistence) * 0.7)
-            - (0.35 * vis_overlay),
+            + ((1.0 - self.weather_background_persistence) * vis_anchor)
+            - (vis_overlay_scale * vis_overlay),
             0.0,
             1.0,
         )
 
         self._sea = np.clip(
-            self._sea + (self.weather_coupling_sea_wind * (self._wind - 0.5)),
+            self._sea + (coupling_scale * self.weather_coupling_sea_wind * (self._wind - 0.5)),
             0.0,
             1.0,
         )
         self._sea = np.clip(
-            self._sea + (self.weather_coupling_sea_visibility * (0.5 - self._vis)),
+            self._sea + (coupling_scale * self.weather_coupling_sea_visibility * (0.5 - self._vis)),
             0.0,
             1.0,
         )
         self._wind = np.clip(
-            self._wind + (self.weather_coupling_wind_visibility * (0.5 - self._vis)),
+            self._wind
+            + (coupling_scale * self.weather_coupling_wind_visibility * (0.5 - self._vis)),
             0.0,
             1.0,
         )
-        self._sea = self._apply_front(self._sea)
-        self._wind = self._apply_front(self._wind)
-        self._vis = np.clip(1.0 - self._apply_front(1.0 - self._vis), 0.0, 1.0)
+        self._sea = self._apply_front(self._sea, strength=front_strength)
+        self._wind = self._apply_front(self._wind, strength=front_strength)
+        self._vis = np.clip(
+            1.0 - self._apply_front(1.0 - self._vis, strength=front_strength), 0.0, 1.0
+        )
 
-        if self.rng.random() < (
-            self.weather_shock_probability * (0.3 + self.weather_unpredictability)
-        ):
+        if self.rng.random() < (shock_probability * (0.3 + self.weather_unpredictability)):
             shock = self.rng.normal(0.0, self.weather_shock_scale, size=self._sea.shape)
             self._sea = np.clip(self._sea + shock, 0.0, 1.0)
             self._wind = np.clip(self._wind + (0.8 * shock), 0.0, 1.0)
@@ -339,6 +369,11 @@ class WeatherField:
         self._sea = self._limit_gradient(self._smooth_field(self._sea))
         self._wind = self._limit_gradient(self._smooth_field(self._wind))
         self._vis = self._limit_gradient(self._smooth_field(self._vis))
+        if is_calm_preset:
+            # Guardrail: keep calm preset from drifting into sustained storm-like severity.
+            self._sea = np.clip(self._sea, 0.0, 0.62)
+            self._wind = np.clip(self._wind, 0.0, 0.62)
+            self._vis = np.clip(self._vis, 0.45, 1.0)
         self.grid = self._to_cells()
 
     def _coord_to_index(self, value_nm: float) -> int:

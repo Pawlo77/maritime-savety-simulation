@@ -70,6 +70,8 @@ EVAC_ERROR_PENALTY: float = 2.5
 """Evacuation logit penalty for forecast error."""
 EVAC_PREP_WEIGHT: float = 1.8
 """Evacuation logit weight for preparedness."""
+EVAC_BASELINE_BIAS: float = -2.8
+"""Evacuation baseline bias to prevent immediate mass evacuation."""
 RAFT_BASE_SUCCESS: float = 0.90
 """Baseline raft deployment success probability."""
 RAFT_WEATHER_PENALTY: float = 0.60

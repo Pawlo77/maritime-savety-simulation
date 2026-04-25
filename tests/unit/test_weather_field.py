@@ -63,3 +63,24 @@ def test_gradient_limit_reduces_extreme_adjacent_jump(seeded_rng: np.random.Gene
     limited = field._limit_gradient(field._sea)
     neighbor_delta = abs(limited[25, 25] - limited[25, 26])
     assert neighbor_delta <= 0.05 + 1e-6
+
+
+def test_calm_preset_stays_relatively_calm_in_early_ticks() -> None:
+    """Calm preset should not rapidly escalate into severe hazard within first ticks."""
+    field = WeatherField(
+        np.random.default_rng(123),
+        weather_preset="calm",
+        weather_unpredictability=0.2,
+        weather_calm_to_storm_prob=0.01,
+        weather_storm_to_calm_prob=0.20,
+        weather_storm_spawn_rate=0.10,
+        weather_max_systems=1,
+        weather_system_intensity_min=0.35,
+        weather_system_intensity_max=0.65,
+    )
+    initial_mean_hazard = float(np.mean([cell.hazard() for cell in field.grid.ravel()]))
+    for _ in range(12):
+        field.step()
+    tick12_mean_hazard = float(np.mean([cell.hazard() for cell in field.grid.ravel()]))
+    assert tick12_mean_hazard < 0.45
+    assert tick12_mean_hazard - initial_mean_hazard < 0.20

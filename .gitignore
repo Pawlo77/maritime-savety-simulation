@@ -3,6 +3,7 @@ data/
 mlruns/
 mlruns.db
 mlruns.db-*
+outputs/
 
 .DS_Store
 .metadata_never_index

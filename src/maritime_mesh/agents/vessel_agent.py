@@ -50,6 +50,7 @@ class VesselAgent(AbstractMesaAgent):
         archetype: CrewArchetype,
         shore_station_positions: tuple[tuple[float, float], ...],
         initial_target_waypoint_index: int | None = None,
+        destination_waypoint_index: int | None = None,
     ) -> None:
         """Initialize vessel with composed behaviour components."""
         super().__init__(model=model, rng=rng)
@@ -87,17 +88,24 @@ class VesselAgent(AbstractMesaAgent):
         self.n_survivors = 10
         self.has_evacuated = False
         self.sos_sent = False
+        self.sos_reason = ""
         self.last_true_hazard = 0.0
         self.last_mesh_observation_count = 0
         self.last_shore_received = False
         self.last_distance_to_shore = 0.0
         self.last_error_probability = 0.0
+        self.reached_destination_this_tick = False
         self.shore_station_positions = shore_station_positions
         if initial_target_waypoint_index is not None:
             self._target_waypoint_index = initial_target_waypoint_index % len(self.lane.waypoints)
         else:
             closest_index = self.lane.closest_waypoint_index(self.position)
             self._target_waypoint_index = self.lane.next_index(closest_index)
+        self.destination_waypoint_index = (
+            destination_waypoint_index % len(self.lane.waypoints)
+            if destination_waypoint_index is not None
+            else None
+        )
 
     def _move_is_safe(self, start: tuple[float, float], end: tuple[float, float]) -> bool:
         """Return whether movement segment avoids buffered shoreline."""
@@ -118,11 +126,18 @@ class VesselAgent(AbstractMesaAgent):
         hazard_slowdown = max(0.3, 1.0 - (0.45 * getattr(self, "last_true_hazard", 0.0)))
         remaining_nm = self.speed_kn * hazard_slowdown * MACRO_TICK_HOURS
         while remaining_nm > 0.0:
+            current_waypoint_index = self._target_waypoint_index
             waypoint = self.lane.waypoint_at(self._target_waypoint_index)
             dx = waypoint.x_nm - self.position[0]
             dy = waypoint.y_nm - self.position[1]
             distance = dist(self.position, (waypoint.x_nm, waypoint.y_nm))
             if distance == 0.0:
+                if (
+                    self.destination_waypoint_index is not None
+                    and current_waypoint_index == self.destination_waypoint_index
+                ):
+                    self.reached_destination_this_tick = True
+                    break
                 self._target_waypoint_index = self.lane.next_index(self._target_waypoint_index)
                 continue
             move_nm = min(distance, remaining_nm)
@@ -152,6 +167,12 @@ class VesselAgent(AbstractMesaAgent):
             self.position = proposed_position
             remaining_nm -= move_nm
             if move_nm >= distance:
+                if (
+                    self.destination_waypoint_index is not None
+                    and current_waypoint_index == self.destination_waypoint_index
+                ):
+                    self.reached_destination_this_tick = True
+                    break
                 self._target_waypoint_index = self.lane.next_index(self._target_waypoint_index)
             else:
                 break
@@ -168,6 +189,7 @@ class VesselAgent(AbstractMesaAgent):
         """Advance vessel behaviour by one macro tick."""
         if self.state in {VesselState.SUNK, VesselState.RESCUED}:
             return
+        self.reached_destination_this_tick = False
 
         w_true = self.weather_field.hazard_at(*self.position)
         self.last_true_hazard = w_true
@@ -204,14 +226,41 @@ class VesselAgent(AbstractMesaAgent):
         self.p_prep = self.preparedness_scorer.score(self.forecast_error, self.archetype_modifier)
 
         if self.state == VesselState.ACTIVE:
+            prep_for_evac = self.p_prep * 0.5
+            evac_probability_raw = self.evacuation_policy.evacuation_probability(
+                w_hat_blend=self.w_hat_blend,
+                forecast_error=self.forecast_error,
+                p_prep=prep_for_evac,
+            )
+            # Avoid mass instantaneous evacuations: ramp risk response over early ticks
+            # and require higher hazard confidence for full-strength triggering.
+            temporal_ramp = min(1.0, max(0.05, float(self.model.tick + 1) / 36.0))
+            hazard_ramp = min(1.0, max(0.10, self.w_hat_blend / 0.75))
+            severity_shape = min(1.0, max(0.03, (self.w_hat_blend / 0.80) ** 3))
+            ramped_hazard = float(self.w_hat_blend * temporal_ramp * hazard_ramp * severity_shape)
+            evac_probability = self.evacuation_policy.evacuation_probability(
+                w_hat_blend=ramped_hazard,
+                forecast_error=self.forecast_error,
+                p_prep=prep_for_evac,
+            )
             evacuate = self.evacuation_policy.should_evacuate(
-                w_hat_blend=self.w_hat_blend, forecast_error=self.forecast_error, p_prep=self.p_prep
+                w_hat_blend=ramped_hazard,
+                forecast_error=self.forecast_error,
+                p_prep=prep_for_evac,
             )
             if evacuate and self.rng.random() < self.last_error_probability:
                 evacuate = False
             if evacuate and self.raft_model.deploy(current_hazard=w_true, p_prep=self.p_prep):
                 self.state = VesselState.EVAC
                 self.has_evacuated = True
+                self.sos_reason = (
+                    "policy_trigger:"
+                    f" p_raw={evac_probability_raw:.2f},"
+                    f" p_eff={evac_probability:.2f},"
+                    f" hazard={self.w_hat_blend:.2f},"
+                    f" err={self.forecast_error:.2f},"
+                    f" prep={self.p_prep:.2f}"
+                )
             else:
                 self._navigate_lane()
         elif self.state == VesselState.EVAC:

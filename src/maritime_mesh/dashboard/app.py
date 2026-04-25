@@ -6,10 +6,14 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
-from maritime_mesh.dashboard.data_access import can_render_map, load_summary, map_world_size
+from maritime_mesh.dashboard.data_access import (
+    can_render_map,
+    clear_data_caches,
+    load_summary,
+    map_world_size,
+)
 from maritime_mesh.dashboard.map_view import make_timeline_map
 from maritime_mesh.dashboard.pages import home, hypothesis, map_playback, results, run_experiment
-from maritime_mesh.dashboard.runner import parse_lane_definitions
 from maritime_mesh.dashboard.styles import apply_dashboard_style
 from maritime_mesh.experiment import scenarios
 from maritime_mesh.experiment.runner import ExperimentRunner
@@ -41,6 +45,23 @@ def main() -> None:
                 ),
             )
         )
+        output_dir_key = str(output_dir.expanduser().resolve()) if output_dir else ""
+        if st.session_state.get("_active_output_dir_key") != output_dir_key:
+            clear_data_caches()
+            st.session_state["_active_output_dir_key"] = output_dir_key
+            for key in (
+                "playback_scenario",
+                "playback_method_filter",
+                "playback_method",
+                "playback_seed_mode",
+                "playback_seed",
+                "results_method_filter",
+                "results_selected_kpis",
+                "results_focus_kpi",
+                "hypothesis_scenarios",
+                "hypothesis_kpis",
+            ):
+                st.session_state.pop(key, None)
         summary_file = output_dir / "summary.csv"
         if summary_file.exists():
             st.success(f"Output ready: found `{summary_file}`.")
@@ -92,10 +113,16 @@ def main() -> None:
 
 # Backward-compatible aliases used in tests and other imports.
 _load_summary = load_summary
-_parse_lane_definitions = parse_lane_definitions
 _map_world_size = map_world_size
 _can_render_map = can_render_map
 _make_timeline_map = make_timeline_map
+
+
+def _parse_lane_definitions(lane_text: str):
+    """Backward-compatible parser alias imported lazily."""
+    from maritime_mesh.dashboard.runner import parse_lane_definitions
+
+    return parse_lane_definitions(lane_text)
 
 
 def _run_from_gui(
@@ -114,6 +141,8 @@ def _run_from_gui(
     max_workers: int = 1,
 ) -> pd.DataFrame:
     """Backward-compatible run helper accepting raw lane text."""
+    from maritime_mesh.dashboard.runner import parse_lane_definitions
+
     scenario_lookup = {
         "scenario_1_calm_passage": scenarios.scenario_1_calm_passage,
         "scenario_2_storm_corridor": scenarios.scenario_2_storm_corridor,

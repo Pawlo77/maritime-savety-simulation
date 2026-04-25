@@ -19,7 +19,6 @@ from maritime_mesh.dashboard.constants import (
     display_method_name,
     display_scenario_name,
 )
-from maritime_mesh.dashboard.runner import run_from_gui
 from maritime_mesh.dashboard.ui import apply_plotly_theme, info_panel, page_intro, section_intro
 from maritime_mesh.enums import MethodCondition
 from maritime_mesh.weather.weather_field import WeatherField
@@ -66,10 +65,65 @@ WEATHER_PRESET_DEFAULTS: dict[str, dict[str, float | int]] = {
         "weather_system_intensity_max": 1.00,
     },
 }
-RUN_COMPLEXITY_PRESETS: dict[str, dict[str, int]] = {
-    "pilot": {"n_seeds": 3, "n_ticks": 80, "n_vessels": 16},
-    "standard": {"n_seeds": 30, "n_ticks": 120, "n_vessels": 25},
-    "stress": {"n_seeds": 12, "n_ticks": 2880, "n_vessels": 100},
+PRESET_LABELS: dict[str, str] = {
+    "paper": "Paper (full matrix)",
+    "pilot": "Pilot (quick smoke test)",
+    "ops_port_safety": "Ops: Port safety quick check",
+    "ops_storm_response": "Ops: Storm response quick check",
+    "ops_blind_shore": "Ops: Blind shore quick check",
+    "stress": "Stress (heavy load)",
+    "custom": "Custom",
+}
+
+RUN_COMPLEXITY_PRESETS: dict[str, dict[str, object]] = {
+    "paper": {
+        "n_seeds": 30,
+        "n_ticks": 2880,
+        "n_vessels": 25,
+        "max_workers": 8,
+        "scenarios": list(SCENARIO_CHOICES),
+        "methods": [condition.value for condition in MethodCondition],
+    },
+    "pilot": {
+        "n_seeds": 3,
+        "n_ticks": 80,
+        "n_vessels": 16,
+        "max_workers": 2,
+        "scenarios": [SCENARIO_CHOICES[0]],
+        "methods": [MethodCondition.PROPOSED.value],
+    },
+    "ops_port_safety": {
+        "n_seeds": 2,
+        "n_ticks": 120,
+        "n_vessels": 12,
+        "max_workers": 2,
+        "scenarios": ["scenario_1_calm_passage"],
+        "methods": [MethodCondition.BASELINE_A.value, MethodCondition.PROPOSED.value],
+    },
+    "ops_storm_response": {
+        "n_seeds": 2,
+        "n_ticks": 160,
+        "n_vessels": 14,
+        "max_workers": 2,
+        "scenarios": ["scenario_2_storm_corridor", "scenario_4_deep_water_rescue"],
+        "methods": [MethodCondition.BASELINE_B.value, MethodCondition.PROPOSED.value],
+    },
+    "ops_blind_shore": {
+        "n_seeds": 2,
+        "n_ticks": 140,
+        "n_vessels": 12,
+        "max_workers": 2,
+        "scenarios": ["scenario_3_blind_shore"],
+        "methods": [MethodCondition.BASELINE_A.value, MethodCondition.PROPOSED.value],
+    },
+    "stress": {
+        "n_seeds": 12,
+        "n_ticks": 2880,
+        "n_vessels": 100,
+        "max_workers": 8,
+        "scenarios": list(SCENARIO_CHOICES),
+        "methods": [condition.value for condition in MethodCondition],
+    },
 }
 
 
@@ -715,6 +769,23 @@ def render(output_dir: Path) -> None:
             "Turn off to tune advanced weather and propagation settings."
         ),
     )
+    with st.sidebar:
+        st.markdown("### Run Meta")
+        run_preset = st.selectbox(
+            "Quick setup preset",
+            options=[
+                "paper",
+                "pilot",
+                "ops_port_safety",
+                "ops_storm_response",
+                "ops_blind_shore",
+                "stress",
+                "custom",
+            ],
+            index=1,
+            format_func=lambda value: PRESET_LABELS.get(value, value),
+            help="Preset applies baseline values for seeds, ticks, and vessels.",
+        )
     (
         tab_basics,
         tab_population,
@@ -723,32 +794,33 @@ def render(output_dir: Path) -> None:
         tab_lanes,
         tab_comms,
         tab_preview,
-    ) = st.tabs(["Basics", "Population", "Weather", "Shore & Spawn", "Lanes", "Comms", "Preview"])
+        tab_summary,
+    ) = st.tabs(
+        ["Basics", "Population", "Weather", "Shore & Spawn", "Lanes", "Comms", "Preview", "Summary"]
+    )
 
     with tab_basics:
         section_intro(
             "Core Simulation Setup",
             "Choose scenarios and methods, then tune run depth and map geometry.",
         )
-        run_preset = st.selectbox(
-            "Quick setup preset",
-            options=["pilot", "standard", "stress", "custom"],
-            index=2,
-            format_func=lambda value: value.capitalize(),
-            help="Preset applies baseline values for seeds, ticks, and vessels.",
-        )
-        preset_values = RUN_COMPLEXITY_PRESETS.get(run_preset, RUN_COMPLEXITY_PRESETS["standard"])
+        if run_preset == "custom":
+            preset_values = RUN_COMPLEXITY_PRESETS["pilot"]
+        else:
+            preset_values = RUN_COMPLEXITY_PRESETS.get(run_preset, RUN_COMPLEXITY_PRESETS["paper"])
+        default_scenarios = list(preset_values.get("scenarios", [SCENARIO_CHOICES[0]]))
+        default_methods = list(preset_values.get("methods", [MethodCondition.PROPOSED.value]))
         selected_scenario_names = st.multiselect(
             "Scenarios",
             SCENARIO_CHOICES,
-            default=SCENARIO_CHOICES[:1],
+            default=default_scenarios,
             format_func=display_scenario_name,
             help=("Select one or more weather/navigation contexts to include in this run."),
         )
         selected_method_values = st.multiselect(
             "Methods",
             [condition.value for condition in MethodCondition],
-            default=[MethodCondition.PROPOSED.value],
+            default=default_methods,
             format_func=display_method_name,
             help="Choose decision strategies to compare under the same conditions.",
         )
@@ -766,7 +838,7 @@ def render(output_dir: Path) -> None:
             "Max parallel workers",
             min_value=1,
             max_value=64,
-            value=4,
+            value=int(preset_values["max_workers"]),
             step=1,
             help=(
                 "Maximum number of independent runs executed concurrently. "
@@ -1209,83 +1281,90 @@ def render(output_dir: Path) -> None:
             )
         st.plotly_chart(setup_preview, width="stretch")
 
-    st.divider()
-    section_intro(
-        "Configuration Readiness",
-        "Confirm estimated workload, core selections, and launch prerequisites before execution.",
-    )
-    _render_run_context_badges(
-        selected_scenario_names=selected_scenario_names,
-        selected_method_values=selected_method_values,
-        n_seeds=int(n_seeds),
-        n_ticks=int(n_ticks),
-        n_vessels=int(n_vessels),
-    )
-    readiness_messages: list[str] = []
-    if not selected_scenario_names:
-        readiness_messages.append("Select at least one scenario in Basics.")
-    if not selected_method_values:
-        readiness_messages.append("Select at least one method in Basics.")
-    if not shore_positions:
-        readiness_messages.append("Add at least one shore station in Shore & Spawn.")
-    if not lane_definitions:
-        readiness_messages.append("Add at least one valid lane in Lanes.")
-    if readiness_messages:
-        st.markdown(
-            "".join(
-                f"<span class='mm-badge mm-badge-warning'>{message}</span>"
-                for message in readiness_messages
+    with tab_summary:
+        section_intro(
+            "Configuration Readiness",
+            (
+                "Confirm estimated workload, core selections, "
+                "and launch prerequisites before execution."
             ),
-            unsafe_allow_html=True,
         )
-    else:
-        st.markdown(
-            "<span class='mm-badge mm-badge-success'>Ready to launch experiment matrix</span>",
-            unsafe_allow_html=True,
+        _render_run_context_badges(
+            selected_scenario_names=selected_scenario_names,
+            selected_method_values=selected_method_values,
+            n_seeds=int(n_seeds),
+            n_ticks=int(n_ticks),
+            n_vessels=int(n_vessels),
         )
-    with st.expander("Effective configuration summary", expanded=False):
-        st.markdown("**Core**")
-        scenarios_label = ", ".join(selected_scenario_names) if selected_scenario_names else "-"
-        methods_label = ", ".join(selected_method_values) if selected_method_values else "-"
-        seeds_ticks_label = (
-            f"- Seeds: `{int(n_seeds)}` | Max workers: `{int(max_workers)}` | "
-            f"Ticks/run: `{int(n_ticks)}` | "
-            f"Vessels/run: `{int(n_vessels)}`"
-        )
-        world_label = (
-            f"- World size: `{float(world_size_nm):.1f} nm` | "
-            f"Land profile: `{land_profile}` | "
-            f"Clearance: `{float(land_clearance_nm):.1f} nm`"
-        )
-        st.markdown(
-            f"- Preset: `{run_preset}`\n"
-            f"- Scenarios: `{scenarios_label}`\n"
-            f"- Methods: `{methods_label}`\n"
-            f"{seeds_ticks_label}\n"
-            f"{world_label}\n"
-            f"- Shore stations: `{len(shore_positions)}` | Valid lanes: `{len(lane_definitions)}`"
-        )
-        st.markdown("**Overrides and runtime-sensitive settings**")
-        spawn_label = (
-            f"- Spawn annulus: `{float(min_spawn_distance_nm):.1f}` "
-            f"to `{float(max_spawn_distance_nm):.1f} nm`"
-        )
-        radio_label = (
-            f"- Radio: range `{float(vessel_radio_range_nm):.1f} nm`, "
-            f"max hops `{int(max_hop_count)}`, "
-            f"packet loss `{float(radio_packet_loss_rate):.2f}`"
-        )
-        broadcast_label = (
-            f"- Shore broadcast radius: `{float(shore_broadcast_radius_nm):.1f} nm` | "
-            f"falloff `{float(radio_range_falloff):.2f}` | "
-            f"weather interference `{float(radio_weather_interference):.2f}`"
-        )
-        weather_label = (
-            f"- Weather preset: `{weather_preset}` | "
-            f"unpredictability `{float(weather_unpredictability):.2f}`"
-        )
-        st.markdown(f"{spawn_label}\n{radio_label}\n{broadcast_label}\n{weather_label}")
-    if st.button("Run Experiment Matrix", type="primary", width="stretch"):
+        readiness_messages: list[str] = []
+        if not selected_scenario_names:
+            readiness_messages.append("Select at least one scenario in Basics.")
+        if not selected_method_values:
+            readiness_messages.append("Select at least one method in Basics.")
+        if not shore_positions:
+            readiness_messages.append("Add at least one shore station in Shore & Spawn.")
+        if not lane_definitions:
+            readiness_messages.append("Add at least one valid lane in Lanes.")
+        if readiness_messages:
+            st.markdown(
+                "".join(
+                    f"<span class='mm-badge mm-badge-warning'>{message}</span>"
+                    for message in readiness_messages
+                ),
+                unsafe_allow_html=True,
+            )
+        else:
+            st.markdown(
+                "<span class='mm-badge mm-badge-success'>Ready to launch experiment matrix</span>",
+                unsafe_allow_html=True,
+            )
+        with st.expander("Effective configuration summary", expanded=False):
+            st.markdown("**Core**")
+            scenarios_label = ", ".join(selected_scenario_names) if selected_scenario_names else "-"
+            methods_label = ", ".join(selected_method_values) if selected_method_values else "-"
+            seeds_ticks_label = (
+                f"- Seeds: `{int(n_seeds)}` | Max workers: `{int(max_workers)}` | "
+                f"Ticks/run: `{int(n_ticks)}` | "
+                f"Vessels/run: `{int(n_vessels)}`"
+            )
+            world_label = (
+                f"- World size: `{float(world_size_nm):.1f} nm` | "
+                f"Land profile: `{land_profile}` | "
+                f"Clearance: `{float(land_clearance_nm):.1f} nm`"
+            )
+            st.markdown(
+                f"- Preset: `{run_preset}`\n"
+                f"- Scenarios: `{scenarios_label}`\n"
+                f"- Methods: `{methods_label}`\n"
+                f"{seeds_ticks_label}\n"
+                f"{world_label}\n"
+                f"- Output directory: `{output_dir}`\n"
+                f"- Shore stations: `{len(shore_positions)}` "
+                "| Valid lanes: `{len(lane_definitions)}`"
+            )
+            st.markdown("**Overrides and runtime-sensitive settings**")
+            spawn_label = (
+                f"- Spawn annulus: `{float(min_spawn_distance_nm):.1f}` "
+                f"to `{float(max_spawn_distance_nm):.1f} nm`"
+            )
+            radio_label = (
+                f"- Radio: range `{float(vessel_radio_range_nm):.1f} nm`, "
+                f"max hops `{int(max_hop_count)}`, "
+                f"packet loss `{float(radio_packet_loss_rate):.2f}`"
+            )
+            broadcast_label = (
+                f"- Shore broadcast radius: `{float(shore_broadcast_radius_nm):.1f} nm` | "
+                f"falloff `{float(radio_range_falloff):.2f}` | "
+                f"weather interference `{float(radio_weather_interference):.2f}`"
+            )
+            weather_label = (
+                f"- Weather preset: `{weather_preset}` | "
+                f"unpredictability `{float(weather_unpredictability):.2f}`"
+            )
+            st.markdown(f"{spawn_label}\n{radio_label}\n{broadcast_label}\n{weather_label}")
+    st.divider()
+    run_experiment_clicked = st.button("Run Experiment Matrix", type="primary", width="stretch")
+    if run_experiment_clicked:
         if not selected_scenario_names:
             st.error("Select at least one scenario in Basics to define the experiment context.")
             return
@@ -1304,6 +1383,8 @@ def render(output_dir: Path) -> None:
         selected_methods = [MethodCondition(value) for value in selected_method_values]
         try:
             with st.spinner("Running simulations..."):
+                from maritime_mesh.dashboard.runner import run_from_gui
+
                 run_from_gui(
                     output_dir=output_dir,
                     selected_scenario_names=selected_scenario_names,

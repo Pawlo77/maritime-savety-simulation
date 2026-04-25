@@ -29,6 +29,7 @@ from maritime_mesh.world.land import WorldLand
 from maritime_mesh.world.lane import ShippingLane, Waypoint
 
 LOGGER = logging.getLogger(__name__)
+DESTINATION_REACHED_RADIUS_NM = 1.0
 
 
 class MaritimeModel(Model):
@@ -107,6 +108,8 @@ class MaritimeModel(Model):
         self._sos_dispatch_station_by_vessel: dict[int, tuple[float, float]] = {}
         self._active_rescue_by_vessel: dict[int, int] = {}
         self._recorded_rescue_vessels: set[int] = set()
+        self._despawned_arrivals_total = 0
+        self._rescue_dispatch_events: list[tuple[int, int, tuple[float, float]]] = []
         self._lanes = self._build_lanes()
         self._validate_lane_geometry()
         self._spawn_agents()
@@ -290,6 +293,7 @@ class MaritimeModel(Model):
             lane=lane,
             spawn_from_start=spawn_from_start,
         )
+        destination_index = len(lane.waypoints) - 1 if spawn_from_start else 0
         vessel = VesselAgent(
             model=self,
             unique_id=self._new_id(),
@@ -312,6 +316,7 @@ class MaritimeModel(Model):
             archetype=archetype,
             shore_station_positions=self.shore_station_positions,
             initial_target_waypoint_index=initial_target_index,
+            destination_waypoint_index=destination_index,
         )
         self.vessels.append(vessel)
         if isinstance(self.scheduler, PhaseScheduler):
@@ -338,6 +343,54 @@ class MaritimeModel(Model):
         self.vessels = [vessel for vessel in self.vessels if vessel.state not in terminal_states]
         for _ in range(len(terminal_vessels)):
             self._spawn_vessel()
+
+    def _despawn_arrived_vessels(self) -> list[tuple[int, tuple[float, float]]]:
+        """Despawn active vessels that reached destination endpoint and respawn replacements."""
+        arrived: list[VesselAgent] = []
+        for vessel in self.vessels:
+            if vessel.state != VesselState.ACTIVE:
+                continue
+            if vessel.destination_waypoint_index is None:
+                continue
+            waypoint = vessel.lane.waypoint_at(vessel.destination_waypoint_index)
+            if (
+                getattr(vessel, "reached_destination_this_tick", False)
+                or dist(vessel.position, (waypoint.x_nm, waypoint.y_nm))
+                <= DESTINATION_REACHED_RADIUS_NM
+            ):
+                arrived.append(vessel)
+        if not arrived:
+            return []
+        events: list[tuple[int, tuple[float, float]]] = []
+        for vessel in arrived:
+            if isinstance(self.scheduler, PhaseScheduler):
+                self.scheduler.remove("vessel", vessel)
+            else:
+                self.scheduler.remove(vessel)
+            events.append((vessel.unique_id, vessel.position))
+        arrived_ids = {vessel.unique_id for vessel in arrived}
+        self.vessels = [vessel for vessel in self.vessels if vessel.unique_id not in arrived_ids]
+        self._despawned_arrivals_total += len(arrived)
+        for _ in arrived:
+            self._spawn_vessel()
+        return events
+
+    def _despawn_idle_rescues(self) -> None:
+        """Remove completed rescue assets from scheduler and model list."""
+        idle_rescues = [
+            rescue for rescue in self.rescue_agents if getattr(rescue, "is_idle", False)
+        ]
+        if not idle_rescues:
+            return
+        for rescue in idle_rescues:
+            if isinstance(self.scheduler, PhaseScheduler):
+                self.scheduler.remove("rescue", rescue)
+            else:
+                self.scheduler.remove(rescue)
+        idle_ids = {rescue.unique_id for rescue in idle_rescues}
+        self.rescue_agents = [
+            rescue for rescue in self.rescue_agents if rescue.unique_id not in idle_ids
+        ]
 
     def _sample_spawn_position(self) -> tuple[float, float]:
         """Draw vessel spawn position satisfying scenario shore-distance constraints."""
@@ -570,6 +623,9 @@ class MaritimeModel(Model):
         self.rescue_agents.append(rescue_agent)
         self._active_rescue_by_vessel[packet.sender_id] = rescue_agent.unique_id
         rescue_agent.target_vessel_id = packet.sender_id
+        self._rescue_dispatch_events.append(
+            (rescue_agent.unique_id, packet.sender_id, dispatch_position)
+        )
         if isinstance(self.scheduler, PhaseScheduler):
             self.scheduler.add("rescue", rescue_agent)
         else:
@@ -614,11 +670,14 @@ class MaritimeModel(Model):
             vessel.damage += 1
             vessel.state = VesselState.EVAC
             vessel.has_evacuated = True
+            if not getattr(vessel, "sos_reason", ""):
+                vessel.sos_reason = "grounding_collision"
             events.append((vessel.unique_id, vessel.position))
         return events
 
     def step(self) -> None:
         """Advance model by one macro tick."""
+        self._rescue_dispatch_events = []
         self.weather_field.step()
         if (
             self.config.scenario.hazard_spike_tick is not None
@@ -653,6 +712,7 @@ class MaritimeModel(Model):
             self.scheduler.step()
         collisions = self.collision_detector.check_and_apply(self.vessels)
         land_collisions = self._land_collisions(previous_positions=previous_positions)
+        despawned_arrivals = self._despawn_arrived_vessels()
         self._record_rescue_arrivals()
         self.kpi_logger.add_collisions(len(collisions) + len(land_collisions))
         self.kpi_logger.log_tick(
@@ -663,11 +723,14 @@ class MaritimeModel(Model):
             relay_links=relay_links,
             collisions=collisions,
             land_collisions=land_collisions,
+            despawned_arrivals=despawned_arrivals,
+            rescue_dispatches=self._rescue_dispatch_events,
             land_shapes=(*self.land.rectangles, *self.land.polygons),
             weather_field=self.weather_field,
             world_size_nm=self.world_size_nm,
             simulation_seed=self.config.seed,
         )
+        self._despawn_idle_rescues()
         self._recycle_terminal_vessels()
         self.tick += 1
         self.utc_hours += MACRO_TICK_HOURS

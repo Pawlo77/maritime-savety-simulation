@@ -14,6 +14,8 @@ from maritime_mesh.constants import (
 from maritime_mesh.enums import RescueAssetType, VesselState
 from maritime_mesh.mesa_compat import Model
 
+RESCUE_CAPTURE_RADIUS_NM = 0.4
+
 
 class RescueAgent(AbstractMesaAgent):
     """Rescue asset travelling to a distress location."""
@@ -44,19 +46,25 @@ class RescueAgent(AbstractMesaAgent):
 
     def step(self) -> None:
         """Advance countdown or move toward target and rescue survivors."""
+        if self.is_idle:
+            return
         if self.mobilisation_ticks_remaining > 0:
             self.mobilisation_ticks_remaining -= 1
             return
 
         distance_to_target = dist(self.position, self.target_position)
-        if distance_to_target == 0.0:
+        if distance_to_target <= RESCUE_CAPTURE_RADIUS_NM:
+            self.position = self.target_position
+            rescued_any = False
             for vessel in self.model.vessels:
                 if (
                     vessel.state == VesselState.EVAC
-                    and dist(vessel.position, self.target_position) <= 0.2
+                    and dist(vessel.position, self.target_position) <= RESCUE_CAPTURE_RADIUS_NM
                 ):
                     vessel.state = VesselState.RESCUED
-                    self.is_idle = True
+                    rescued_any = True
+            # Mark completed rescue sortie (even if target vessel already terminal).
+            self.is_idle = bool(rescued_any or self.target_vessel_id is not None)
             return
 
         local_hazard = self.model.weather_field.hazard_at(*self.position)

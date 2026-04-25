@@ -57,17 +57,39 @@ def _validate_run_log(run_df: pd.DataFrame, run_name: str) -> pd.DataFrame:
 
 if st is not None:
     _cached_read_csv = st.cache_data(show_spinner=False, max_entries=8)(pd.read_csv)
+    _cached_read_csv_signature = st.cache_data(show_spinner=False, max_entries=8)(
+        lambda signature: _cached_read_csv(Path(signature[0]))
+    )
     _cached_read_parquet = st.cache_data(show_spinner=False, max_entries=8)(pd.read_parquet)
+    _cached_read_parquet_signature = st.cache_data(show_spinner=False, max_entries=8)(
+        lambda signature: _cached_read_parquet(Path(signature[0]))
+    )
+    _cached_concat_parquet_paths = st.cache_data(show_spinner=False, max_entries=8)(
+        lambda signatures: pd.concat(
+            [_cached_read_parquet_signature(signature) for signature in signatures],
+            ignore_index=True,
+        )
+    )
 else:
     _cached_read_csv = pd.read_csv
+    _cached_read_csv_signature = lambda signature: _cached_read_csv(Path(signature[0]))  # noqa: E731
     _cached_read_parquet = pd.read_parquet
+    _cached_read_parquet_signature = lambda signature: _cached_read_parquet(Path(signature[0]))  # noqa: E731
+    _cached_concat_parquet_paths = lambda signatures: pd.concat(  # noqa: E731
+        [_cached_read_parquet_signature(signature) for signature in signatures], ignore_index=True
+    )
 
 
 def load_summary(output_dir: Path) -> pd.DataFrame:
     """Load summary CSV if available."""
     summary_path = output_dir / "summary.csv"
     if summary_path.exists():
-        return _validate_summary(_cached_read_csv(summary_path))
+        summary_signature = (
+            str(summary_path),
+            summary_path.stat().st_mtime_ns,
+            summary_path.stat().st_size,
+        )
+        return _validate_summary(_cached_read_csv_signature(summary_signature))
     return pd.DataFrame()
 
 
@@ -80,13 +102,25 @@ def load_run_log(output_dir: Path, scenario: str, method: str, seed: int) -> pd.
     if manifest_path.exists():
         _read_manifest(manifest_path)
     if run_path.exists():
-        return _validate_run_log(_cached_read_parquet(run_path), run_name=run_name)
+        run_signature = (str(run_path), run_path.stat().st_mtime_ns, run_path.stat().st_size)
+        return _validate_run_log(_cached_read_parquet_signature(run_signature), run_name=run_name)
     if chunk_paths:
-        frames = [_cached_read_parquet(path) for path in chunk_paths]
-        return _validate_run_log(pd.concat(frames, ignore_index=True), run_name=run_name)
+        chunk_key = tuple(
+            (str(path), path.stat().st_mtime_ns, path.stat().st_size) for path in chunk_paths
+        )
+        return _validate_run_log(_cached_concat_parquet_paths(chunk_key), run_name=run_name)
     if not run_path.exists() and not chunk_paths:
         return pd.DataFrame()
     return pd.DataFrame()
+
+
+def load_run_manifest(output_dir: Path, scenario: str, method: str, seed: int) -> dict:
+    """Load one run manifest payload when available."""
+    run_name = f"{scenario}_{method}_{seed}"
+    manifest_path = output_dir / f"{run_name}.manifest.json"
+    if not manifest_path.exists():
+        return {}
+    return _read_manifest(manifest_path)
 
 
 def map_world_size(run_df: pd.DataFrame) -> float:
@@ -110,3 +144,17 @@ def can_render_map(run_df: pd.DataFrame) -> bool:
         "y_nm",
     }
     return required.issubset(set(run_df.columns))
+
+
+def clear_data_caches() -> None:
+    """Clear Streamlit data caches used by dashboard data access."""
+    for cached_fn in (
+        _cached_read_csv,
+        _cached_read_csv_signature,
+        _cached_read_parquet,
+        _cached_read_parquet_signature,
+        _cached_concat_parquet_paths,
+    ):
+        clear = getattr(cached_fn, "clear", None)
+        if callable(clear):
+            clear()
