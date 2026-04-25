@@ -7,7 +7,10 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from maritime_mesh.constants import WORLD_SIZE_NM
+from maritime_mesh.enums import MethodCondition
+from maritime_mesh.experiment import scenarios
 from maritime_mesh.experiment.analysis import StatisticalAnalyser
+from maritime_mesh.experiment.runner import ExperimentRunner
 
 
 def _load_summary(output_dir: Path) -> pd.DataFrame:
@@ -26,8 +29,37 @@ def _load_run_log(output_dir: Path, scenario: str, method: str, seed: int) -> pd
     return pd.read_parquet(run_path)
 
 
+def _parse_lane_definitions(
+    raw_text: str,
+) -> tuple[tuple[str, tuple[tuple[float, float], ...]], ...]:
+    """Parse lane definitions from multiline text."""
+    lane_definitions = []
+    for raw_line in raw_text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        lane_name, waypoints_part = line.split(":", maxsplit=1)
+        waypoints = []
+        for point in waypoints_part.split(";"):
+            x_str, y_str = point.strip().split(",", maxsplit=1)
+            waypoints.append((float(x_str), float(y_str)))
+        lane_definitions.append((lane_name.strip(), tuple(waypoints)))
+    return tuple(lane_definitions)
+
+
+def _map_world_size(run_df: pd.DataFrame) -> float:
+    """Infer world size from run logs."""
+    if "world_size_nm" in run_df.columns:
+        series = run_df["world_size_nm"].dropna()
+        if not series.empty:
+            return float(series.max())
+    xy_max = max(float(run_df["x_nm"].max()), float(run_df["y_nm"].max()))
+    return max(WORLD_SIZE_NM, xy_max)
+
+
 def _make_timeline_map(run_df: pd.DataFrame) -> go.Figure:
     """Build animated map with weather probes, vessels, and rescue assets."""
+    world_size_nm = _map_world_size(run_df=run_df)
     ticks = sorted(run_df["tick"].dropna().unique())
     weather_df = run_df[run_df["entity_type"] == "weather_probe"]
     vessel_df = run_df[run_df["entity_type"] == "vessel"]
@@ -137,9 +169,9 @@ def _make_timeline_map(run_df: pd.DataFrame) -> go.Figure:
         data=frames[0].data if frames else [],
         frames=frames,
         layout=go.Layout(
-            xaxis={"range": [0, WORLD_SIZE_NM], "title": "X (nm)"},
+            xaxis={"range": [0, world_size_nm], "title": "X (nm)"},
             yaxis={
-                "range": [0, WORLD_SIZE_NM],
+                "range": [0, world_size_nm],
                 "title": "Y (nm)",
                 "scaleanchor": "x",
                 "scaleratio": 1,
@@ -199,9 +231,9 @@ def _make_timeline_map(run_df: pd.DataFrame) -> go.Figure:
                 {
                     "type": "rect",
                     "x0": 0.0,
-                    "y0": 92.0,
-                    "x1": 18.0,
-                    "y1": 100.0,
+                    "y0": world_size_nm * 0.92,
+                    "x1": world_size_nm * 0.18,
+                    "y1": world_size_nm,
                     "fillcolor": "#6b8e23",
                     "line": {"color": "#425b15"},
                     "opacity": 0.65,
@@ -209,25 +241,147 @@ def _make_timeline_map(run_df: pd.DataFrame) -> go.Figure:
                 }
             ],
             annotations=[
-                {"x": 9.0, "y": 96.0, "text": "Land", "showarrow": False, "font": {"size": 11}},
+                {
+                    "x": world_size_nm * 0.09,
+                    "y": world_size_nm * 0.96,
+                    "text": "Land",
+                    "showarrow": False,
+                    "font": {"size": 11},
+                },
             ],
         ),
     )
 
 
+def _run_from_gui(
+    output_dir: Path,
+    selected_scenario_names: list[str],
+    selected_methods: list[MethodCondition],
+    n_seeds: int,
+    n_ticks: int,
+    n_vessels: int,
+    world_size_nm: float,
+    green_crew_fraction: float,
+    shore_noise_std: float,
+    shore_position: tuple[float, float],
+    lane_text: str,
+) -> pd.DataFrame:
+    """Run experiment matrix from GUI controls."""
+    scenario_lookup = {
+        "scenario_1_calm_passage": scenarios.scenario_1_calm_passage,
+        "scenario_2_storm_corridor": scenarios.scenario_2_storm_corridor,
+        "scenario_3_blind_shore": scenarios.scenario_3_blind_shore,
+        "scenario_4_deep_water_rescue": scenarios.scenario_4_deep_water_rescue,
+    }
+    scenario_factories = [scenario_lookup[name] for name in selected_scenario_names]
+    lane_definitions = _parse_lane_definitions(lane_text)
+    runner = ExperimentRunner(
+        n_seeds=n_seeds,
+        output_dir=output_dir,
+        scenario_factories=scenario_factories,
+        methods=selected_methods,
+        simulation_overrides={
+            "n_ticks": n_ticks,
+            "world_size_nm": world_size_nm,
+            "shore_station_position": shore_position,
+            "lane_definitions": lane_definitions,
+        },
+        scenario_overrides={
+            "n_vessels": n_vessels,
+            "green_crew_fraction": green_crew_fraction,
+            "shore_noise_std": shore_noise_std,
+            "min_spawn_distance_nm": 0.0,
+            "max_spawn_distance_nm": world_size_nm,
+        },
+    )
+    return runner.run_all()
+
+
 def main() -> None:
-    """Render dashboard views for precomputed experiment data."""
+    """Render dashboard views and GUI experiment launcher."""
     st.set_page_config(page_title="Maritime Mesh Dashboard", layout="wide")
     st.title("Maritime Weather Mesh Simulation")
+
     output_dir = Path(st.sidebar.text_input("Output directory", "outputs/maritime_mesh"))
+    st.sidebar.header("Run Experiment")
+    selected_scenario_names = st.sidebar.multiselect(
+        "Scenarios",
+        [
+            "scenario_1_calm_passage",
+            "scenario_2_storm_corridor",
+            "scenario_3_blind_shore",
+            "scenario_4_deep_water_rescue",
+        ],
+        default=["scenario_1_calm_passage"],
+    )
+    selected_method_values = st.sidebar.multiselect(
+        "Methods",
+        [condition.value for condition in MethodCondition],
+        default=[MethodCondition.PROPOSED.value],
+    )
+    n_seeds = st.sidebar.number_input(
+        "Number of seeds", min_value=1, max_value=200, value=5, step=1
+    )
+    n_ticks = st.sidebar.number_input(
+        "Ticks per run", min_value=1, max_value=2000, value=120, step=5
+    )
+    n_vessels = st.sidebar.number_input("Vessels", min_value=1, max_value=500, value=25, step=1)
+    world_size_nm = st.sidebar.number_input(
+        "Map size (nm)",
+        min_value=20.0,
+        max_value=1000.0,
+        value=float(WORLD_SIZE_NM),
+        step=10.0,
+    )
+    green_crew_fraction = st.sidebar.slider(
+        "Green crew fraction", min_value=0.0, max_value=1.0, value=0.3
+    )
+    shore_noise_std = st.sidebar.slider("Shore noise std", min_value=0.0, max_value=1.0, value=0.18)
+    shore_x = st.sidebar.number_input("Shore station X (nm)", value=0.0, step=1.0)
+    shore_y = st.sidebar.number_input("Shore station Y (nm)", value=world_size_nm / 2.0, step=1.0)
+    lane_text = st.sidebar.text_area(
+        "Lane waypoints (one line: name:x1,y1;x2,y2;...)",
+        value=(
+            f"north_south:20,0;20,{world_size_nm}\n"
+            f"east_west:0,{world_size_nm * 0.6};{world_size_nm},{world_size_nm * 0.6}\n"
+            f"diagonal:{world_size_nm * 0.1},{world_size_nm * 0.1};"
+            f"{world_size_nm * 0.9},{world_size_nm * 0.9}"
+        ),
+        height=140,
+    )
+    run_button = st.sidebar.button("Run Experiment Matrix", use_container_width=True)
+
     results = _load_summary(output_dir)
+    if run_button:
+        if not selected_scenario_names:
+            st.error("Select at least one scenario before running.")
+        elif not selected_method_values:
+            st.error("Select at least one method before running.")
+        else:
+            selected_methods = [MethodCondition(value) for value in selected_method_values]
+            with st.spinner("Running simulations from GUI..."):
+                results = _run_from_gui(
+                    output_dir=output_dir,
+                    selected_scenario_names=selected_scenario_names,
+                    selected_methods=selected_methods,
+                    n_seeds=int(n_seeds),
+                    n_ticks=int(n_ticks),
+                    n_vessels=int(n_vessels),
+                    world_size_nm=float(world_size_nm),
+                    green_crew_fraction=float(green_crew_fraction),
+                    shore_noise_std=float(shore_noise_std),
+                    shore_position=(float(shore_x), float(shore_y)),
+                    lane_text=lane_text,
+                )
+            st.success("Experiment run complete. Views refreshed with new results.")
+
     if results.empty:
-        st.warning("No summary.csv found. Run experiment first.")
+        st.warning("No summary.csv found. Configure parameters in sidebar and run experiment.")
         return
 
     scenario = st.sidebar.selectbox("Scenario", sorted(results["scenario"].unique()))
     method_filter = st.sidebar.multiselect(
-        "Methods",
+        "Methods to display",
         sorted(results["method"].unique()),
         default=sorted(results["method"].unique()),
     )
@@ -243,13 +397,9 @@ def main() -> None:
         output_dir=output_dir, scenario=scenario, method=selected_method, seed=int(selected_seed)
     )
     if run_df.empty:
-        st.info(
-            "Per-run parquet not found for this selection. "
-            "Run experiments after this upgrade to generate full map logs."
-        )
+        st.info("Per-run parquet not found for this selection.")
     else:
-        fig = _make_timeline_map(run_df=run_df)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(_make_timeline_map(run_df=run_df), use_container_width=True)
 
     st.subheader("Method Means")
     means = filtered.groupby("method").mean(numeric_only=True).reset_index()
