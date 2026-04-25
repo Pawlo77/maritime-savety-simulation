@@ -1,7 +1,7 @@
-"""Run-experiment page with map-first lane setup."""
-
+from math import dist
 from pathlib import Path
 
+import numpy as np
 import plotly.graph_objects as go
 import streamlit as st
 
@@ -11,12 +11,30 @@ from maritime_mesh.constants import (
     RADIO_WEATHER_INTERFERENCE,
     SHORE_BROADCAST_RADIUS_NM,
     VESSEL_RADIO_RANGE_NM,
+    WEATHER_GRID_CELLS,
     WORLD_SIZE_NM,
 )
 from maritime_mesh.dashboard.constants import SCENARIO_CHOICES
 from maritime_mesh.dashboard.runner import run_from_gui
 from maritime_mesh.enums import MethodCondition
+from maritime_mesh.weather.weather_field import WeatherField
 from maritime_mesh.world.land import WorldLand
+
+ROUTE_START_NEAR_SHORE_NM = 45.0
+ROUTE_END_NEAR_SHORE_NM = 60.0
+ROUTE_END_OFFMAP_MARGIN_NM = 12.0
+LaneDefinitions = tuple[tuple[str, tuple[tuple[float, float], ...]], ...]
+LaneEndpointWeights = tuple[tuple[str, tuple[float, float]], ...]
+
+
+def _is_near_boundary(point: tuple[float, float], world_size_nm: float, margin_nm: float) -> bool:
+    """Return whether point is near map boundary."""
+    return (
+        point[0] <= margin_nm
+        or point[1] <= margin_nm
+        or point[0] >= world_size_nm - margin_nm
+        or point[1] >= world_size_nm - margin_nm
+    )
 
 
 def _make_setup_preview_map(
@@ -25,43 +43,103 @@ def _make_setup_preview_map(
     shore_positions: tuple[tuple[float, float], ...],
     min_spawn_distance_nm: float,
     max_spawn_distance_nm: float,
+    vessel_radio_range_nm: float,
+    shore_broadcast_radius_nm: float,
+    land_profile: str,
+    land_clearance_nm: float,
 ) -> go.Figure:
     """Build setup preview map with land, routes, shore, and spawn bounds."""
     figure = go.Figure()
-    land = WorldLand.default_for_world_size(world_size_nm)
+    weather_field = WeatherField(rng=np.random.default_rng(0), world_size_nm=world_size_nm)
+    weather_grid = np.array(
+        [
+            [
+                weather_field.hazard_at(
+                    ((x_idx + 0.5) * world_size_nm) / WEATHER_GRID_CELLS,
+                    ((y_idx + 0.5) * world_size_nm) / WEATHER_GRID_CELLS,
+                )
+                for x_idx in range(WEATHER_GRID_CELLS)
+            ]
+            for y_idx in range(WEATHER_GRID_CELLS)
+        ]
+    )
+    axis_points = [
+        ((idx + 0.5) * world_size_nm) / WEATHER_GRID_CELLS for idx in range(WEATHER_GRID_CELLS)
+    ]
+    figure.add_trace(
+        go.Heatmap(
+            x=axis_points,
+            y=axis_points,
+            z=weather_grid,
+            colorscale="Turbo",
+            zmin=0.0,
+            zmax=1.0,
+            opacity=0.28,
+            name="Weather hazard",
+            colorbar={"title": "Hazard"},
+            hovertemplate=("Weather<br>x=%{x:.1f}, y=%{y:.1f}<br>hazard=%{z:.2f}<extra></extra>"),
+        )
+    )
+    land = WorldLand.default_for_world_size(world_size_nm, profile=land_profile)
+    land_patches: list[list[tuple[float, float]]] = []
     for rectangle in land.rectangles:
-        figure.add_shape(
-            type="rect",
-            x0=rectangle.x0,
-            y0=rectangle.y0,
-            x1=rectangle.x1,
-            y1=rectangle.y1,
-            fillcolor="#6b8e23",
-            line={"color": "#425b15"},
-            opacity=0.6,
+        land_patches.append(
+            [
+                (rectangle.x0, rectangle.y0),
+                (rectangle.x1, rectangle.y0),
+                (rectangle.x1, rectangle.y1),
+                (rectangle.x0, rectangle.y1),
+            ]
         )
-    # Spawn distance zone around shore station.
-    reference_shore = shore_positions[0]
-    if max_spawn_distance_nm > 0:
-        figure.add_shape(
-            type="circle",
-            x0=reference_shore[0] - max_spawn_distance_nm,
-            y0=reference_shore[1] - max_spawn_distance_nm,
-            x1=reference_shore[0] + max_spawn_distance_nm,
-            y1=reference_shore[1] + max_spawn_distance_nm,
-            line={"color": "#1f77b4", "dash": "dot"},
-            opacity=0.35,
+    for polygon in land.polygons:
+        land_patches.append(list(polygon.points))
+    for idx, patch in enumerate(land_patches):
+        figure.add_trace(
+            go.Scatter(
+                x=[point[0] for point in patch] + [patch[0][0]],
+                y=[point[1] for point in patch] + [patch[0][1]],
+                mode="lines",
+                fill="toself",
+                fillcolor="rgba(107,142,35,0.6)",
+                line={"color": "#425b15"},
+                name="Land",
+                legendgroup="land",
+                showlegend=idx == 0,
+                hoverinfo="skip",
+            )
         )
-    if min_spawn_distance_nm > 0:
-        figure.add_shape(
-            type="circle",
-            x0=reference_shore[0] - min_spawn_distance_nm,
-            y0=reference_shore[1] - min_spawn_distance_nm,
-            x1=reference_shore[0] + min_spawn_distance_nm,
-            y1=reference_shore[1] + min_spawn_distance_nm,
-            line={"color": "#d62728", "dash": "dot"},
-            opacity=0.45,
-        )
+    # Draw range circles for every shore station.
+    for shore_x, shore_y in shore_positions:
+        if max_spawn_distance_nm > 0:
+            figure.add_shape(
+                type="circle",
+                x0=shore_x - max_spawn_distance_nm,
+                y0=shore_y - max_spawn_distance_nm,
+                x1=shore_x + max_spawn_distance_nm,
+                y1=shore_y + max_spawn_distance_nm,
+                line={"color": "#1f77b4", "dash": "dot"},
+                opacity=0.25,
+            )
+        if min_spawn_distance_nm > 0:
+            figure.add_shape(
+                type="circle",
+                x0=shore_x - min_spawn_distance_nm,
+                y0=shore_y - min_spawn_distance_nm,
+                x1=shore_x + min_spawn_distance_nm,
+                y1=shore_y + min_spawn_distance_nm,
+                line={"color": "#d62728", "dash": "dot"},
+                opacity=0.30,
+            )
+        if shore_broadcast_radius_nm > 0:
+            figure.add_shape(
+                type="circle",
+                x0=shore_x - shore_broadcast_radius_nm,
+                y0=shore_y - shore_broadcast_radius_nm,
+                x1=shore_x + shore_broadcast_radius_nm,
+                y1=shore_y + shore_broadcast_radius_nm,
+                line={"color": "#17becf", "dash": "dash"},
+                opacity=0.25,
+            )
     figure.add_trace(
         go.Scatter(
             x=[position[0] for position in shore_positions],
@@ -89,10 +167,29 @@ def _make_setup_preview_map(
                 hovertemplate="point=%{text}<br>x=%{x:.1f}<br>y=%{y:.1f}<extra></extra>",
             )
         )
+        if vessel_radio_range_nm > 0:
+            endpoints = (points[0], points[-1])
+            for endpoint_x, endpoint_y in endpoints:
+                figure.add_shape(
+                    type="circle",
+                    x0=endpoint_x - vessel_radio_range_nm,
+                    y0=endpoint_y - vessel_radio_range_nm,
+                    x1=endpoint_x + vessel_radio_range_nm,
+                    y1=endpoint_y + vessel_radio_range_nm,
+                    line={"color": "#9467bd", "dash": "dot"},
+                    opacity=0.15,
+                )
     figure.update_layout(
         template="plotly_white",
-        xaxis={"range": [0, world_size_nm], "title": "X (nm)"},
-        yaxis={"range": [0, world_size_nm], "title": "Y (nm)", "scaleanchor": "x", "scaleratio": 1},
+        title={"text": f"Setup preview (land clearance {land_clearance_nm:.1f} nm)"},
+        xaxis={"range": [0, world_size_nm], "title": "X (nm)", "fixedrange": True},
+        yaxis={
+            "range": [0, world_size_nm],
+            "title": "Y (nm)",
+            "scaleanchor": "x",
+            "scaleratio": 1,
+            "fixedrange": True,
+        },
         height=470,
         margin={"l": 20, "r": 20, "t": 20, "b": 20},
         legend={"orientation": "h", "yanchor": "bottom", "y": 1.02},
@@ -100,31 +197,55 @@ def _make_setup_preview_map(
     return figure
 
 
-def _lane_builder(world_size_nm: float) -> tuple[tuple[str, tuple[tuple[float, float], ...]], ...]:
+def _lane_builder(
+    world_size_nm: float,
+    shore_positions: tuple[tuple[float, float], ...],
+) -> tuple[LaneDefinitions, LaneEndpointWeights]:
     """Render map-first lane builder and return lane definitions."""
-    land = WorldLand.default_for_world_size(world_size_nm)
-    if "lane_store" not in st.session_state:
+    land_profile = st.session_state.get("land_profile", "natural_coast")
+    land_clearance_nm = float(st.session_state.get("land_clearance_nm", 0.0))
+    land = WorldLand.default_for_world_size(world_size_nm, profile=land_profile)
+    if "lane_store" not in st.session_state or st.session_state.get(
+        "lane_store_world_size_nm"
+    ) != float(world_size_nm):
         st.session_state.lane_store = {
-            "coastal_corridor": [
-                (world_size_nm * 0.16, world_size_nm * 0.12),
-                (world_size_nm * 0.22, world_size_nm * 0.32),
-                (world_size_nm * 0.20, world_size_nm * 0.54),
-                (world_size_nm * 0.24, world_size_nm * 0.86),
+            "southern_crossing": [
+                (world_size_nm * 0.18, world_size_nm * 0.16),
+                (world_size_nm * 0.34, world_size_nm * 0.28),
+                (world_size_nm * 0.52, world_size_nm * 0.34),
+                (world_size_nm * 0.70, world_size_nm * 0.32),
+                (world_size_nm * 0.90, world_size_nm * 0.40),
             ],
-            "southern_arc": [
-                (world_size_nm * 0.16, world_size_nm * 0.14),
-                (world_size_nm * 0.36, world_size_nm * 0.18),
-                (world_size_nm * 0.58, world_size_nm * 0.28),
-                (world_size_nm * 0.86, world_size_nm * 0.36),
+            "mid_channel_crossing": [
+                (world_size_nm * 0.20, world_size_nm * 0.24),
+                (world_size_nm * 0.36, world_size_nm * 0.30),
+                (world_size_nm * 0.52, world_size_nm * 0.34),
+                (world_size_nm * 0.66, world_size_nm * 0.36),
+                (world_size_nm * 0.92, world_size_nm * 0.38),
             ],
-            "northern_bypass": [
-                (world_size_nm * 0.16, world_size_nm * 0.70),
-                (world_size_nm * 0.38, world_size_nm * 0.72),
-                (world_size_nm * 0.58, world_size_nm * 0.70),
-                (world_size_nm * 0.78, world_size_nm * 0.84),
-                (world_size_nm * 0.94, world_size_nm * 0.84),
+            "northern_arc": [
+                (world_size_nm * 0.18, world_size_nm * 0.70),
+                (world_size_nm * 0.36, world_size_nm * 0.74),
+                (world_size_nm * 0.58, world_size_nm * 0.72),
+                (world_size_nm * 0.80, world_size_nm * 0.82),
+                (world_size_nm * 0.94, world_size_nm * 0.86),
+            ],
+            "north_south_west": [
+                (world_size_nm * 0.36, world_size_nm * 0.14),
+                (world_size_nm * 0.36, world_size_nm * 0.32),
+                (world_size_nm * 0.38, world_size_nm * 0.50),
+                (world_size_nm * 0.40, world_size_nm * 0.68),
+                (world_size_nm * 0.40, world_size_nm * 0.88),
+            ],
+            "north_south_east": [
+                (world_size_nm * 0.84, world_size_nm * 0.14),
+                (world_size_nm * 0.84, world_size_nm * 0.30),
+                (world_size_nm * 0.84, world_size_nm * 0.48),
+                (world_size_nm * 0.84, world_size_nm * 0.66),
+                (world_size_nm * 0.86, world_size_nm * 0.84),
             ],
         }
+        st.session_state.lane_store_world_size_nm = float(world_size_nm)
     st.markdown("#### Lane Builder (Map-First)")
     st.caption("Select a lane, add points with coordinates, and preview the route on the map.")
     lane_name = st.selectbox("Lane", [*st.session_state.lane_store.keys(), "new_lane"])
@@ -143,16 +264,27 @@ def _lane_builder(world_size_nm: float) -> tuple[tuple[str, tuple[tuple[float, f
         if st.button("Add point", use_container_width=True):
             new_point = (float(x_nm), float(y_nm))
             lane_points = st.session_state.lane_store.setdefault(lane_name, [])
-            if land.is_land(new_point):
-                st.error("Waypoint cannot be placed on land/shore.")
-            elif lane_points and land.segment_intersects_land(lane_points[-1], new_point):
-                st.error("Segment intersects land/shore. Choose a water-only waypoint.")
+            if land.distance_to_land(new_point) <= land_clearance_nm:
+                st.error("Waypoint is too close to land/shore clearance zone.")
+            elif lane_points and land.segment_intersects_land(
+                lane_points[-1],
+                new_point,
+                clearance_nm=land_clearance_nm,
+            ):
+                st.error("Segment intersects shoreline clearance zone. Choose safer waypoint.")
             else:
                 lane_points.append(new_point)
     if st.button("Undo last point", use_container_width=True):
         points = st.session_state.lane_store.get(lane_name, [])
         if points:
             points.pop()
+    col_remove_lane, col_clear_lanes = st.columns(2)
+    with col_remove_lane:
+        if st.button("Remove selected lane", use_container_width=True) and lane_name != "new_lane":
+            st.session_state.lane_store.pop(lane_name, None)
+    with col_clear_lanes:
+        if st.button("Clear all lanes", use_container_width=True):
+            st.session_state.lane_store = {}
 
     valid_lanes = []
     for name, points in st.session_state.lane_store.items():
@@ -160,14 +292,73 @@ def _lane_builder(world_size_nm: float) -> tuple[tuple[str, tuple[tuple[float, f
             continue
         is_valid = True
         for idx in range(len(points) - 1):
-            if land.segment_intersects_land(points[idx], points[idx + 1]):
+            if land.segment_intersects_land(
+                points[idx],
+                points[idx + 1],
+                clearance_nm=land_clearance_nm,
+            ):
                 is_valid = False
                 break
         if is_valid:
+            start_point = points[0]
+            end_point = points[-1]
+            if not any(
+                dist(start_point, shore) <= ROUTE_START_NEAR_SHORE_NM for shore in shore_positions
+            ):
+                is_valid = False
+                st.warning(
+                    f"Lane '{name}' is ignored because start point is not near shore "
+                    f"(<= {ROUTE_START_NEAR_SHORE_NM:.1f} nm)."
+                )
+            elif not (
+                any(dist(end_point, shore) <= ROUTE_END_NEAR_SHORE_NM for shore in shore_positions)
+                or _is_near_boundary(end_point, world_size_nm, ROUTE_END_OFFMAP_MARGIN_NM)
+            ):
+                is_valid = False
+                st.warning(
+                    f"Lane '{name}' is ignored because end point must be near shore "
+                    f"or <= {ROUTE_END_OFFMAP_MARGIN_NM:.1f} nm from map edge."
+                )
+        if is_valid:
             valid_lanes.append((name, tuple(points)))
         else:
-            st.warning(f"Lane '{name}' is ignored because it intersects land/shore.")
-    return tuple(valid_lanes)
+            if len(points) >= 2:
+                st.warning(f"Lane '{name}' is ignored because it intersects land/shore.")
+
+    st.markdown("#### Spawn Share Per Route Endpoint")
+    st.caption(
+        "Set relative spawn percentages for each route endpoint (start/end). "
+        "Values are normalized automatically; default is equal probability per endpoint."
+    )
+    endpoint_weights: list[tuple[str, tuple[float, float]]] = []
+    for lane_name_valid, _ in valid_lanes:
+        key_start = f"spawn_weight::{lane_name_valid}::start"
+        key_end = f"spawn_weight::{lane_name_valid}::end"
+        if key_start not in st.session_state:
+            st.session_state[key_start] = 1.0
+        if key_end not in st.session_state:
+            st.session_state[key_end] = 1.0
+        col_lane, col_start, col_end = st.columns([2, 1, 1])
+        with col_lane:
+            st.markdown(f"`{lane_name_valid}`")
+        with col_start:
+            start_weight = st.number_input(
+                "start %",
+                min_value=0.0,
+                value=float(st.session_state[key_start]),
+                key=f"input_{key_start}",
+            )
+        with col_end:
+            end_weight = st.number_input(
+                "end %",
+                min_value=0.0,
+                value=float(st.session_state[key_end]),
+                key=f"input_{key_end}",
+            )
+        st.session_state[key_start] = float(start_weight)
+        st.session_state[key_end] = float(end_weight)
+        endpoint_weights.append((lane_name_valid, (float(start_weight), float(end_weight))))
+    return tuple(valid_lanes), tuple(endpoint_weights)
 
 
 def _shore_station_builder(world_size_nm: float) -> tuple[tuple[float, float], ...]:
@@ -188,11 +379,20 @@ def _shore_station_builder(world_size_nm: float) -> tuple[tuple[float, float], .
         st.write("")
         if st.button("Add shore station", use_container_width=True):
             st.session_state.shore_station_store.append((float(shore_x), float(shore_y)))
-    if (
-        st.button("Undo last shore station", use_container_width=True)
-        and len(st.session_state.shore_station_store) > 1
-    ):
-        st.session_state.shore_station_store.pop()
+    col_remove, col_clear = st.columns(2)
+    with col_remove:
+        if st.session_state.shore_station_store:
+            shore_labels = [
+                f"Shore {idx + 1}: ({position[0]:.1f}, {position[1]:.1f})"
+                for idx, position in enumerate(st.session_state.shore_station_store)
+            ]
+            selected = st.selectbox("Remove shore station", shore_labels)
+            if st.button("Remove selected shore", use_container_width=True):
+                selected_idx = shore_labels.index(selected)
+                st.session_state.shore_station_store.pop(selected_idx)
+    with col_clear:
+        if st.button("Clear all shores", use_container_width=True):
+            st.session_state.shore_station_store = []
     return tuple(st.session_state.shore_station_store)
 
 
@@ -229,6 +429,20 @@ def render(output_dir: Path) -> None:
             value=float(WORLD_SIZE_NM),
             step=10.0,
         )
+        land_profile = st.selectbox(
+            "Land profile",
+            options=["natural_coast", "legacy_rectangles"],
+            index=0,
+        )
+        land_clearance_nm = st.number_input(
+            "Land clearance (nm)",
+            min_value=0.0,
+            max_value=20.0,
+            value=1.0,
+            step=0.1,
+        )
+        st.session_state.land_profile = land_profile
+        st.session_state.land_clearance_nm = float(land_clearance_nm)
 
     with tab_population:
         n_vessels = st.number_input("Vessels", min_value=1, max_value=500, value=25, step=1)
@@ -255,7 +469,10 @@ def render(output_dir: Path) -> None:
         )
 
     with tab_lanes:
-        lane_definitions = _lane_builder(world_size_nm=world_size_nm)
+        lane_definitions, lane_endpoint_spawn_weights = _lane_builder(
+            world_size_nm=world_size_nm,
+            shore_positions=shore_positions,
+        )
 
     with tab_comms:
         vessel_radio_range_nm = st.number_input(
@@ -313,7 +530,16 @@ def render(output_dir: Path) -> None:
             shore_positions=shore_positions,
             min_spawn_distance_nm=float(min_spawn_distance_nm),
             max_spawn_distance_nm=float(max_spawn_distance_nm),
+            vessel_radio_range_nm=float(vessel_radio_range_nm),
+            shore_broadcast_radius_nm=float(shore_broadcast_radius_nm),
+            land_profile=land_profile,
+            land_clearance_nm=float(land_clearance_nm),
         )
+        if land_clearance_nm > 0.0:
+            st.caption(
+                f"Active shoreline safety clearance: {float(land_clearance_nm):.1f} nm "
+                "(routes and spawn must remain outside this band)."
+            )
         st.plotly_chart(setup_preview, use_container_width=True)
 
     st.divider()
@@ -323,6 +549,9 @@ def render(output_dir: Path) -> None:
             return
         if not selected_method_values:
             st.error("Select at least one method.")
+            return
+        if not shore_positions:
+            st.error("Add at least one shore station.")
             return
         if not lane_definitions:
             st.error("Add at least one lane with two points.")
@@ -354,6 +583,12 @@ def render(output_dir: Path) -> None:
                     radio_range_falloff=float(radio_range_falloff),
                     radio_weather_interference=float(radio_weather_interference),
                     radio_packet_loss_rate=float(radio_packet_loss_rate),
+                    land_profile=land_profile,
+                    land_clearance_nm=float(land_clearance_nm),
+                    route_start_near_shore_nm=ROUTE_START_NEAR_SHORE_NM,
+                    route_end_near_shore_nm=ROUTE_END_NEAR_SHORE_NM,
+                    route_end_offmap_margin_nm=ROUTE_END_OFFMAP_MARGIN_NM,
+                    lane_endpoint_spawn_weights=lane_endpoint_spawn_weights,
                 )
         except ValueError as exc:
             st.error(str(exc))

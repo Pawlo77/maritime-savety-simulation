@@ -4,8 +4,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from maritime_mesh.constants import (
+    LAND_CLEARANCE_NM,
+    LAND_PROFILE,
     RADIO_RANGE_FALLOFF,
     RADIO_WEATHER_INTERFERENCE,
+    ROUTE_END_NEAR_SHORE_NM,
+    ROUTE_END_OFFMAP_MARGIN_NM,
+    ROUTE_START_NEAR_SHORE_NM,
     SHORE_BROADCAST_RADIUS_NM,
     SHORE_STATION_POSITION,
     VESSEL_RADIO_RANGE_NM,
@@ -78,6 +83,14 @@ class SimulationConfig:
     radio_weather_interference: float = RADIO_WEATHER_INTERFERENCE
     radio_packet_loss_rate: float = 0.02
     scheduler_mode: str = "phased"
+    land_profile: str = LAND_PROFILE
+    land_clearance_nm: float = LAND_CLEARANCE_NM
+    route_start_near_shore_nm: float = ROUTE_START_NEAR_SHORE_NM
+    route_end_near_shore_nm: float = ROUTE_END_NEAR_SHORE_NM
+    route_end_offmap_margin_nm: float = ROUTE_END_OFFMAP_MARGIN_NM
+    lane_endpoint_spawn_weights: tuple[tuple[str, tuple[float, float]], ...] = field(
+        default_factory=tuple
+    )
 
     def __post_init__(self) -> None:
         """Validate simulation-level invariants used by the engine."""
@@ -99,6 +112,14 @@ class SimulationConfig:
             raise ValueError("radio_packet_loss_rate must be in [0.0, 1.0].")
         if self.scheduler_mode not in {"legacy", "phased"}:
             raise ValueError("scheduler_mode must be either 'legacy' or 'phased'.")
+        if self.land_profile not in {"legacy_rectangles", "natural_coast"}:
+            raise ValueError("land_profile must be 'legacy_rectangles' or 'natural_coast'.")
+        if self.land_clearance_nm < 0.0:
+            raise ValueError("land_clearance_nm must be >= 0.")
+        if self.route_start_near_shore_nm < 0.0 or self.route_end_near_shore_nm < 0.0:
+            raise ValueError("Route-to-shore thresholds must be >= 0.")
+        if self.route_end_offmap_margin_nm < 0.0:
+            raise ValueError("route_end_offmap_margin_nm must be >= 0.")
         if (
             self.shore_station_positions
             and self.shore_station_position in self.shore_station_positions
@@ -117,3 +138,10 @@ class SimulationConfig:
             for x_nm, y_nm in waypoints:
                 if not 0.0 <= x_nm <= self.world_size_nm or not 0.0 <= y_nm <= self.world_size_nm:
                     raise ValueError("Lane waypoints must lie within world bounds.")
+        for lane_name, weights in self.lane_endpoint_spawn_weights:
+            if not lane_name.strip():
+                raise ValueError("Spawn weight lane names must be non-empty.")
+            if len(weights) != 2:
+                raise ValueError("Each lane endpoint weight must contain start and end weights.")
+            if weights[0] < 0.0 or weights[1] < 0.0:
+                raise ValueError("Lane endpoint spawn weights must be >= 0.")

@@ -188,31 +188,52 @@ def make_timeline_map(
     if not land_df.empty:
         first_tick = int(ticks[0]) if ticks else 0
         for _, row in land_df[land_df["tick"] == first_tick].iterrows():
-            land_shapes.append(
-                {
-                    "type": "rect",
-                    "xref": "x",
-                    "yref": "y",
-                    "x0": float(row["x0_nm"]),
-                    "y0": float(row["y0_nm"]),
-                    "x1": float(row["x1_nm"]),
-                    "y1": float(row["y1_nm"]),
-                    "fillcolor": "#6b8e23",
-                    "line": {"color": "#425b15"},
-                    "opacity": 0.45,
-                    "layer": "below",
-                }
-            )
+            geometry_type = row.get("geometry_type", "rectangle")
+            if geometry_type == "polygon" and isinstance(row.get("points_nm"), str):
+                points = []
+                for pair in row["points_nm"].split(";"):
+                    x_str, y_str = pair.split(",", maxsplit=1)
+                    points.append((float(x_str), float(y_str)))
+                path = "M " + " L ".join(f"{x},{y}" for x, y in points) + " Z"
+                land_shapes.append(
+                    {
+                        "type": "path",
+                        "path": path,
+                        "xref": "x",
+                        "yref": "y",
+                        "fillcolor": "#6b8e23",
+                        "line": {"color": "#425b15"},
+                        "opacity": 0.45,
+                        "layer": "below",
+                    }
+                )
+            else:
+                land_shapes.append(
+                    {
+                        "type": "rect",
+                        "xref": "x",
+                        "yref": "y",
+                        "x0": float(row["x0_nm"]),
+                        "y0": float(row["y0_nm"]),
+                        "x1": float(row["x1_nm"]),
+                        "y1": float(row["y1_nm"]),
+                        "fillcolor": "#6b8e23",
+                        "line": {"color": "#425b15"},
+                        "opacity": 0.45,
+                        "layer": "below",
+                    }
+                )
     return go.Figure(
         data=frames[0].data if frames else [],
         frames=frames,
         layout=go.Layout(
-            xaxis={"range": [0, world_size_nm], "title": "X (nm)"},
+            xaxis={"range": [0, world_size_nm], "title": "X (nm)", "fixedrange": True},
             yaxis={
                 "range": [0, world_size_nm],
                 "title": "Y (nm)",
                 "scaleanchor": "x",
                 "scaleratio": 1,
+                "fixedrange": True,
             },
             template="plotly_white",
             height=760,

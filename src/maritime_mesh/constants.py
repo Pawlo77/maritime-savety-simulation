@@ -26,6 +26,16 @@ RADIO_WEATHER_INTERFERENCE: float = 0.8
 """Weight of local hazard on reception interference."""
 VESSEL_RADIO_RANGE_NM: float = 15.0
 """Ship-to-ship radio range in nautical miles."""
+LAND_PROFILE: str = "natural_coast"
+"""Land generation profile used for world geometry."""
+LAND_CLEARANCE_NM: float = 0.0
+"""Minimum safety corridor around land where routes are disallowed."""
+ROUTE_START_NEAR_SHORE_NM: float = 45.0
+"""Maximum distance from route start to nearest shore station."""
+ROUTE_END_NEAR_SHORE_NM: float = 60.0
+"""Maximum distance from route end to nearest shore station."""
+ROUTE_END_OFFMAP_MARGIN_NM: float = 12.0
+"""Distance from map boundary qualifying as route exiting map."""
 MAX_HOP_COUNT: int = 2
 """Maximum relay hops allowed for a packet."""
 WEATHER_WEIGHT_SEA_STATE: float = 0.4

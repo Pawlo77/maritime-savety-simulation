@@ -54,7 +54,7 @@ class KpiLogger:
         relay_links: list[tuple[int, int]],
         collisions: list[tuple[int, int]],
         land_collisions: list[tuple[int, tuple[float, float]]],
-        land_rectangles: tuple,
+        land_shapes: tuple,
         weather_field,
         world_size_nm: float,
         simulation_seed: int,
@@ -160,20 +160,28 @@ class KpiLogger:
                     "simulation_seed": simulation_seed,
                 }
             )
-        for idx, land in enumerate(land_rectangles):
-            self.records.append(
-                {
-                    "tick": tick,
-                    "entity_type": "landmass",
-                    "entity_id": f"land_{idx}",
-                    "x0_nm": land.x0,
-                    "y0_nm": land.y0,
-                    "x1_nm": land.x1,
-                    "y1_nm": land.y1,
-                    "world_size_nm": world_size_nm,
-                    "simulation_seed": simulation_seed,
-                }
-            )
+        for idx, land in enumerate(land_shapes):
+            record = {
+                "tick": tick,
+                "entity_type": "landmass",
+                "entity_id": f"land_{idx}",
+                "world_size_nm": world_size_nm,
+                "simulation_seed": simulation_seed,
+            }
+            if hasattr(land, "x0"):
+                record.update(
+                    {
+                        "geometry_type": "rectangle",
+                        "x0_nm": land.x0,
+                        "y0_nm": land.y0,
+                        "x1_nm": land.x1,
+                        "y1_nm": land.y1,
+                    }
+                )
+            elif hasattr(land, "points"):
+                serialized = ";".join(f"{point[0]},{point[1]}" for point in land.points)
+                record.update({"geometry_type": "polygon", "points_nm": serialized})
+            self.records.append(record)
 
     def compute_kpis(self) -> dict[str, float]:
         """Aggregate records into experiment KPI set."""

@@ -38,7 +38,9 @@ class MaritimeModel(Model):
         self.rng = np.random.default_rng(config.seed)
         self.weather_field = WeatherField(rng=self.rng, world_size_nm=config.world_size_nm)
         self.world_size_nm = config.world_size_nm
-        self.land = WorldLand.default_for_world_size(self.world_size_nm)
+        self.land = WorldLand.default_for_world_size(
+            self.world_size_nm, profile=config.land_profile
+        )
         self.shore_station_positions = (
             config.shore_station_positions
             if config.shore_station_positions
@@ -84,31 +86,53 @@ class MaritimeModel(Model):
             ]
         return [
             ShippingLane(
-                "coastal_corridor",
+                "southern_crossing",
                 [
-                    Waypoint(self.world_size_nm * 0.16, self.world_size_nm * 0.12),
-                    Waypoint(self.world_size_nm * 0.22, self.world_size_nm * 0.32),
-                    Waypoint(self.world_size_nm * 0.20, self.world_size_nm * 0.54),
-                    Waypoint(self.world_size_nm * 0.24, self.world_size_nm * 0.86),
+                    Waypoint(self.world_size_nm * 0.18, self.world_size_nm * 0.16),
+                    Waypoint(self.world_size_nm * 0.34, self.world_size_nm * 0.28),
+                    Waypoint(self.world_size_nm * 0.52, self.world_size_nm * 0.34),
+                    Waypoint(self.world_size_nm * 0.70, self.world_size_nm * 0.32),
+                    Waypoint(self.world_size_nm * 0.90, self.world_size_nm * 0.40),
                 ],
             ),
             ShippingLane(
-                "southern_arc",
+                "mid_channel_crossing",
                 [
-                    Waypoint(self.world_size_nm * 0.16, self.world_size_nm * 0.14),
-                    Waypoint(self.world_size_nm * 0.36, self.world_size_nm * 0.18),
-                    Waypoint(self.world_size_nm * 0.58, self.world_size_nm * 0.28),
-                    Waypoint(self.world_size_nm * 0.86, self.world_size_nm * 0.36),
+                    Waypoint(self.world_size_nm * 0.20, self.world_size_nm * 0.24),
+                    Waypoint(self.world_size_nm * 0.36, self.world_size_nm * 0.30),
+                    Waypoint(self.world_size_nm * 0.52, self.world_size_nm * 0.34),
+                    Waypoint(self.world_size_nm * 0.66, self.world_size_nm * 0.36),
+                    Waypoint(self.world_size_nm * 0.92, self.world_size_nm * 0.38),
                 ],
             ),
             ShippingLane(
-                "northern_bypass",
+                "northern_arc",
                 [
-                    Waypoint(self.world_size_nm * 0.16, self.world_size_nm * 0.70),
-                    Waypoint(self.world_size_nm * 0.38, self.world_size_nm * 0.72),
-                    Waypoint(self.world_size_nm * 0.58, self.world_size_nm * 0.70),
-                    Waypoint(self.world_size_nm * 0.78, self.world_size_nm * 0.84),
-                    Waypoint(self.world_size_nm * 0.94, self.world_size_nm * 0.84),
+                    Waypoint(self.world_size_nm * 0.18, self.world_size_nm * 0.70),
+                    Waypoint(self.world_size_nm * 0.36, self.world_size_nm * 0.74),
+                    Waypoint(self.world_size_nm * 0.58, self.world_size_nm * 0.72),
+                    Waypoint(self.world_size_nm * 0.80, self.world_size_nm * 0.82),
+                    Waypoint(self.world_size_nm * 0.94, self.world_size_nm * 0.86),
+                ],
+            ),
+            ShippingLane(
+                "north_south_west",
+                [
+                    Waypoint(self.world_size_nm * 0.36, self.world_size_nm * 0.14),
+                    Waypoint(self.world_size_nm * 0.36, self.world_size_nm * 0.32),
+                    Waypoint(self.world_size_nm * 0.38, self.world_size_nm * 0.50),
+                    Waypoint(self.world_size_nm * 0.40, self.world_size_nm * 0.68),
+                    Waypoint(self.world_size_nm * 0.40, self.world_size_nm * 0.88),
+                ],
+            ),
+            ShippingLane(
+                "north_south_east",
+                [
+                    Waypoint(self.world_size_nm * 0.84, self.world_size_nm * 0.14),
+                    Waypoint(self.world_size_nm * 0.84, self.world_size_nm * 0.30),
+                    Waypoint(self.world_size_nm * 0.84, self.world_size_nm * 0.48),
+                    Waypoint(self.world_size_nm * 0.84, self.world_size_nm * 0.66),
+                    Waypoint(self.world_size_nm * 0.86, self.world_size_nm * 0.84),
                 ],
             ),
         ]
@@ -125,9 +149,41 @@ class MaritimeModel(Model):
             for idx in range(len(lane.waypoints) - 1):
                 start = (lane.waypoints[idx].x_nm, lane.waypoints[idx].y_nm)
                 end = (lane.waypoints[idx + 1].x_nm, lane.waypoints[idx + 1].y_nm)
-                if self.land.segment_intersects_land(start, end):
+                if self.land.segment_intersects_land(
+                    start,
+                    end,
+                    clearance_nm=self.config.land_clearance_nm,
+                ):
                     raise ValueError(
                         f"Lane '{lane.name}' intersects land between {start} and {end}."
+                    )
+            if self.config.lane_definitions:
+                start_point = (lane.waypoints[0].x_nm, lane.waypoints[0].y_nm)
+                end_point = (lane.waypoints[-1].x_nm, lane.waypoints[-1].y_nm)
+                near_start_shore = any(
+                    dist(start_point, shore) <= self.config.route_start_near_shore_nm
+                    for shore in self.shore_station_positions
+                )
+                if not near_start_shore:
+                    raise ValueError(
+                        f"Lane '{lane.name}' must start near shore station "
+                        f"(<= {self.config.route_start_near_shore_nm:.1f} nm)."
+                    )
+                near_end_shore = any(
+                    dist(end_point, shore) <= self.config.route_end_near_shore_nm
+                    for shore in self.shore_station_positions
+                )
+                near_boundary = (
+                    end_point[0] <= self.config.route_end_offmap_margin_nm
+                    or end_point[1] <= self.config.route_end_offmap_margin_nm
+                    or end_point[0] >= self.world_size_nm - self.config.route_end_offmap_margin_nm
+                    or end_point[1] >= self.world_size_nm - self.config.route_end_offmap_margin_nm
+                )
+                if not (near_end_shore or near_boundary):
+                    raise ValueError(
+                        f"Lane '{lane.name}' must end near shore "
+                        f"(<= {self.config.route_end_near_shore_nm:.1f} nm) "
+                        "or near map boundary."
                     )
 
     def _spawn_agents(self) -> None:
@@ -159,7 +215,7 @@ class MaritimeModel(Model):
         self.coastal_station = self.coastal_stations[0]
 
         for _ in range(self.config.scenario.n_vessels):
-            lane = self.rng.choice(self._lanes)
+            lane, spawn_from_start = self._sample_lane_endpoint()
             archetype = (
                 CrewArchetype.GREEN
                 if self.rng.random() < self.config.scenario.green_crew_fraction
@@ -176,6 +232,10 @@ class MaritimeModel(Model):
                 ForecastFuser(trust_decay=ShoreTrustDecay(decay_k=1e-9))
                 if self.config.method == MethodCondition.BASELINE_B
                 else ForecastFuser()
+            )
+            spawn_position, initial_target_index = self._sample_spawn_on_lane(
+                lane=lane,
+                spawn_from_start=spawn_from_start,
             )
             vessel = VesselAgent(
                 model=self,
@@ -194,10 +254,11 @@ class MaritimeModel(Model):
                 ),
                 raft_model=RaftDeploymentModel(rng=self.rng),
                 survival_model=SurvivalModel(rng=self.rng),
-                position=self._sample_spawn_position(),
+                position=spawn_position,
                 speed_kn=float(self.rng.uniform(10.0, 20.0)),
                 archetype=archetype,
                 shore_station_positions=self.shore_station_positions,
+                initial_target_waypoint_index=initial_target_index,
             )
             self.vessels.append(vessel)
             if isinstance(self.scheduler, PhaseScheduler):
@@ -227,6 +288,86 @@ class MaritimeModel(Model):
         raise ValueError(
             "Failed to sample vessel spawn position satisfying constraints after 200 attempts."
         )
+
+    def _sample_lane_endpoint(self) -> tuple[ShippingLane, bool]:
+        """Sample lane endpoint pair using configured endpoint weights."""
+        configured = dict(self.config.lane_endpoint_spawn_weights)
+        choices: list[tuple[ShippingLane, bool]] = []
+        weights: list[float] = []
+        for lane in self._lanes:
+            start_weight, end_weight = configured.get(lane.name, (1.0, 1.0))
+            choices.extend(((lane, True), (lane, False)))
+            weights.extend((float(start_weight), float(end_weight)))
+        total_weight = sum(weights)
+        if total_weight <= 0.0:
+            weights = [1.0 for _ in weights]
+            total_weight = float(len(weights))
+        probabilities = [weight / total_weight for weight in weights]
+        index = int(self.rng.choice(len(choices), p=probabilities))
+        return choices[index]
+
+    def _sample_spawn_on_lane(
+        self,
+        lane: ShippingLane,
+        spawn_from_start: bool,
+    ) -> tuple[tuple[float, float], int]:
+        """Draw vessel spawn on a lane segment while respecting world constraints."""
+        min_distance = max(0.0, self.config.scenario.min_spawn_distance_nm)
+        max_distance = max(min_distance, self.config.scenario.max_spawn_distance_nm)
+        if spawn_from_start:
+            segment_idx = 0
+            start_ratio_min = 0.0
+            start_ratio_max = 0.25
+        else:
+            segment_idx = len(lane.waypoints) - 2
+            start_ratio_min = 0.75
+            start_ratio_max = 1.0
+        start = (lane.waypoints[segment_idx].x_nm, lane.waypoints[segment_idx].y_nm)
+        end = (lane.waypoints[segment_idx + 1].x_nm, lane.waypoints[segment_idx + 1].y_nm)
+        for _ in range(250):
+            ratio = float(self.rng.uniform(start_ratio_min, start_ratio_max))
+            base = (
+                start[0] + ((end[0] - start[0]) * ratio),
+                start[1] + ((end[1] - start[1]) * ratio),
+            )
+            dx = end[0] - start[0]
+            dy = end[1] - start[1]
+            seg_norm = max(1e-9, dist(start, end))
+            normal = (-dy / seg_norm, dx / seg_norm)
+            offset = float(self.rng.uniform(-0.4, 0.4))
+            candidate = (
+                base[0] + (normal[0] * offset),
+                base[1] + (normal[1] * offset),
+            )
+            in_bounds = (
+                0.0 <= candidate[0] <= self.world_size_nm
+                and 0.0 <= candidate[1] <= self.world_size_nm
+            )
+            if not in_bounds:
+                continue
+            if self.land.distance_to_land(candidate) <= self.config.land_clearance_nm:
+                continue
+            distance_to_shore = min(
+                dist(candidate, station_position)
+                for station_position in self.shore_station_positions
+            )
+            if not (min_distance <= distance_to_shore <= max_distance):
+                continue
+            approach_waypoint = segment_idx + 1
+            approach_point = (
+                lane.waypoints[approach_waypoint].x_nm,
+                lane.waypoints[approach_waypoint].y_nm,
+            )
+            if self.land.segment_intersects_land(
+                candidate,
+                approach_point,
+                clearance_nm=self.config.land_clearance_nm,
+            ):
+                continue
+            return candidate, approach_waypoint
+        fallback = self._sample_spawn_position()
+        closest_index = lane.closest_waypoint_index(fallback)
+        return fallback, lane.next_index(closest_index)
 
     def _route_sos_to_station(self, packet: SosPacket) -> tuple[float, float] | None:
         """Attempt SOS delivery to shore stations; return receiver position."""
@@ -450,7 +591,7 @@ class MaritimeModel(Model):
             relay_links=relay_links,
             collisions=collisions,
             land_collisions=land_collisions,
-            land_rectangles=self.land.rectangles,
+            land_shapes=(*self.land.rectangles, *self.land.polygons),
             weather_field=self.weather_field,
             world_size_nm=self.world_size_nm,
             simulation_seed=self.config.seed,

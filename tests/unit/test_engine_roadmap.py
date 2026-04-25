@@ -23,7 +23,11 @@ def test_config_validation_rejects_invalid_green_fraction() -> None:
 
 def test_spawn_constraints_raise_when_infeasible(default_simulation_config) -> None:
     """Model should fail loudly for infeasible spawn constraints."""
-    bad_scenario = replace(default_simulation_config.scenario, min_spawn_distance_nm=1000.0)
+    bad_scenario = replace(
+        default_simulation_config.scenario,
+        min_spawn_distance_nm=1000.0,
+        max_spawn_distance_nm=1500.0,
+    )
     bad_config = replace(default_simulation_config, scenario=bad_scenario)
     with pytest.raises(ValueError, match="infeasible"):
         MaritimeModel(bad_config)

@@ -52,16 +52,50 @@ def run_from_gui(
     radio_range_falloff: float | None = None,
     radio_weather_interference: float | None = None,
     radio_packet_loss_rate: float | None = None,
+    land_profile: str = "natural_coast",
+    land_clearance_nm: float = 0.0,
+    route_start_near_shore_nm: float = 45.0,
+    route_end_near_shore_nm: float = 60.0,
+    route_end_offmap_margin_nm: float = 12.0,
+    lane_endpoint_spawn_weights: tuple[tuple[str, tuple[float, float]], ...] = (),
 ) -> pd.DataFrame:
     """Run experiment matrix from GUI controls."""
-    land = WorldLand.default_for_world_size(world_size_nm)
+    land = WorldLand.default_for_world_size(world_size_nm, profile=land_profile)
     effective_shores = shore_positions or (shore_position,)
     for position in effective_shores:
         if not land.is_land(position):
             raise ValueError(f"Shore station {position} must be on land.")
     for lane_name, waypoints in lane_definitions:
+        start_point = waypoints[0]
+        end_point = waypoints[-1]
+        near_start_shore = any(
+            ((start_point[0] - shore[0]) ** 2 + (start_point[1] - shore[1]) ** 2) ** 0.5
+            <= route_start_near_shore_nm
+            for shore in effective_shores
+        )
+        if not near_start_shore:
+            raise ValueError(
+                f"Lane '{lane_name}' must start near shore (<= {route_start_near_shore_nm:.1f} nm)."
+            )
+        near_end_shore = any(
+            ((end_point[0] - shore[0]) ** 2 + (end_point[1] - shore[1]) ** 2) ** 0.5
+            <= route_end_near_shore_nm
+            for shore in effective_shores
+        )
+        near_boundary = (
+            end_point[0] <= route_end_offmap_margin_nm
+            or end_point[1] <= route_end_offmap_margin_nm
+            or end_point[0] >= world_size_nm - route_end_offmap_margin_nm
+            or end_point[1] >= world_size_nm - route_end_offmap_margin_nm
+        )
+        if not (near_end_shore or near_boundary):
+            raise ValueError(f"Lane '{lane_name}' must end near shore or map boundary.")
         for idx in range(len(waypoints) - 1):
-            if land.segment_intersects_land(waypoints[idx], waypoints[idx + 1]):
+            if land.segment_intersects_land(
+                waypoints[idx],
+                waypoints[idx + 1],
+                clearance_nm=land_clearance_nm,
+            ):
                 raise ValueError(f"Lane '{lane_name}' intersects land.")
 
     scenario_lookup = {
@@ -89,6 +123,12 @@ def run_from_gui(
             "radio_range_falloff": radio_range_falloff,
             "radio_weather_interference": radio_weather_interference,
             "radio_packet_loss_rate": radio_packet_loss_rate,
+            "land_profile": land_profile,
+            "land_clearance_nm": land_clearance_nm,
+            "route_start_near_shore_nm": route_start_near_shore_nm,
+            "route_end_near_shore_nm": route_end_near_shore_nm,
+            "route_end_offmap_margin_nm": route_end_offmap_margin_nm,
+            "lane_endpoint_spawn_weights": lane_endpoint_spawn_weights,
         },
         scenario_overrides={
             "n_vessels": n_vessels,

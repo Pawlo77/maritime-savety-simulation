@@ -49,6 +49,7 @@ class VesselAgent(AbstractMesaAgent):
         speed_kn: float,
         archetype: CrewArchetype,
         shore_station_positions: tuple[tuple[float, float], ...],
+        initial_target_waypoint_index: int | None = None,
     ) -> None:
         """Initialize vessel with composed behaviour components."""
         super().__init__(model=model, rng=rng)
@@ -92,12 +93,29 @@ class VesselAgent(AbstractMesaAgent):
         self.last_distance_to_shore = 0.0
         self.last_error_probability = 0.0
         self.shore_station_positions = shore_station_positions
-        closest_index = self.lane.closest_waypoint_index(self.position)
-        self._target_waypoint_index = self.lane.next_index(closest_index)
+        if initial_target_waypoint_index is not None:
+            self._target_waypoint_index = initial_target_waypoint_index % len(self.lane.waypoints)
+        else:
+            closest_index = self.lane.closest_waypoint_index(self.position)
+            self._target_waypoint_index = self.lane.next_index(closest_index)
+
+    def _move_is_safe(self, start: tuple[float, float], end: tuple[float, float]) -> bool:
+        """Return whether movement segment avoids buffered shoreline."""
+        if (
+            not hasattr(self, "model")
+            or not hasattr(self.model, "land")
+            or not hasattr(self.model, "config")
+        ):
+            return True
+        return not self.model.land.segment_intersects_land(
+            start,
+            end,
+            clearance_nm=self.model.config.land_clearance_nm,
+        )
 
     def _navigate_lane(self) -> None:
         """Move vessel along ordered lane waypoints by one macro-tick step."""
-        hazard_slowdown = max(0.3, 1.0 - (0.45 * self.last_true_hazard))
+        hazard_slowdown = max(0.3, 1.0 - (0.45 * getattr(self, "last_true_hazard", 0.0)))
         remaining_nm = self.speed_kn * hazard_slowdown * MACRO_TICK_HOURS
         while remaining_nm > 0.0:
             waypoint = self.lane.waypoint_at(self._target_waypoint_index)
@@ -110,10 +128,28 @@ class VesselAgent(AbstractMesaAgent):
             move_nm = min(distance, remaining_nm)
             angle = atan2(dy, dx)
             self.heading_deg = (90.0 - np.degrees(angle)) % 360.0
-            self.position = (
+            proposed_position = (
                 self.position[0] + (move_nm * cos(radians(90.0 - self.heading_deg))),
                 self.position[1] + (move_nm * sin(radians(90.0 - self.heading_deg))),
             )
+            if not self._move_is_safe(self.position, proposed_position):
+                safe_position = None
+                retry_move_nm = move_nm
+                for _ in range(4):
+                    retry_move_nm *= 0.5
+                    candidate = (
+                        self.position[0] + (retry_move_nm * cos(radians(90.0 - self.heading_deg))),
+                        self.position[1] + (retry_move_nm * sin(radians(90.0 - self.heading_deg))),
+                    )
+                    if self._move_is_safe(self.position, candidate):
+                        safe_position = candidate
+                        move_nm = retry_move_nm
+                        break
+                if safe_position is None:
+                    self._target_waypoint_index = self.lane.next_index(self._target_waypoint_index)
+                    break
+                proposed_position = safe_position
+            self.position = proposed_position
             remaining_nm -= move_nm
             if move_nm >= distance:
                 self._target_waypoint_index = self.lane.next_index(self._target_waypoint_index)
