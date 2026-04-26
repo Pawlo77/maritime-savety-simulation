@@ -124,6 +124,7 @@ class VesselAgent(AbstractMesaAgent):
     def _navigate_lane(self) -> None:
         """Move vessel along ordered lane waypoints by one macro-tick step."""
         hazard_slowdown = max(0.3, 1.0 - (0.45 * getattr(self, "last_true_hazard", 0.0)))
+        destination_waypoint_index = getattr(self, "destination_waypoint_index", None)
         remaining_nm = self.speed_kn * hazard_slowdown * MACRO_TICK_HOURS
         while remaining_nm > 0.0:
             current_waypoint_index = self._target_waypoint_index
@@ -133,8 +134,8 @@ class VesselAgent(AbstractMesaAgent):
             distance = dist(self.position, (waypoint.x_nm, waypoint.y_nm))
             if distance == 0.0:
                 if (
-                    self.destination_waypoint_index is not None
-                    and current_waypoint_index == self.destination_waypoint_index
+                    destination_waypoint_index is not None
+                    and current_waypoint_index == destination_waypoint_index
                 ):
                     self.reached_destination_this_tick = True
                     break
@@ -168,8 +169,8 @@ class VesselAgent(AbstractMesaAgent):
             remaining_nm -= move_nm
             if move_nm >= distance:
                 if (
-                    self.destination_waypoint_index is not None
-                    and current_waypoint_index == self.destination_waypoint_index
+                    destination_waypoint_index is not None
+                    and current_waypoint_index == destination_waypoint_index
                 ):
                     self.reached_destination_this_tick = True
                     break

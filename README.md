@@ -1,4 +1,4 @@
-# maritime_mesh
+# Maritime Safety Mesh Simulation
 
 Reproducible multi-agent maritime weather mesh simulation package.
 
